@@ -18,7 +18,7 @@ const isWorkingDay = (date) => {
 };
 
 /**
- * Count working days between two dates
+ * Count working days between two dates (inclusive)
  */
 const countWorkingDays = (startDate, endDate) => {
   let count = 0;
@@ -114,8 +114,7 @@ const getSprintIssues = async (sprintId) => {
       fields: [
         'summary', 'status', 'priority', 'assignee', 'issuetype',
         'timeoriginalestimate', 'timeestimate', 'timespent',
-        'duedate', 'created', 'updated', 'fixVersions', 'parent',
-        'worklog'
+        'duedate', 'created', 'updated', 'fixVersions', 'parent'
       ],
       maxResults: 100
     };
@@ -146,6 +145,76 @@ const getSprintIssues = async (sprintId) => {
   } while (nextPageToken);
 
   return allIssues;
+};
+
+/**
+ * Get ALL worklogs for a single issue (paginated)
+ * Jira embedded worklog only returns max 20, so we call the dedicated API
+ */
+const getIssueWorklogs = async (issueKey) => {
+  let allWorklogs = [];
+  let startAt = 0;
+  const maxResults = 100;
+
+  try {
+    do {
+      const response = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}/worklog?startAt=${startAt}&maxResults=${maxResults}`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+
+      if (!response.ok) {
+        console.error(`[getIssueWorklogs] Failed for ${issueKey}: ${response.status}`);
+        break;
+      }
+
+      const data = await response.json();
+      const worklogs = data.worklogs || [];
+      allWorklogs = allWorklogs.concat(worklogs);
+
+      // Check if there are more pages
+      if (startAt + worklogs.length >= (data.total || 0)) {
+        break;
+      }
+      startAt += maxResults;
+    } while (true);
+  } catch (error) {
+    console.error(`[getIssueWorklogs] Error for ${issueKey}:`, error);
+  }
+
+  return allWorklogs;
+};
+
+/**
+ * Get ALL worklogs for multiple issues
+ * Returns a map: { 'YYYY-MM-DD': totalHours }
+ */
+const getAllWorklogs = async (issues, sprintStartDate, sprintEndDate) => {
+  const dailyTimeLogged = {};
+  const startStr = new Date(sprintStartDate).toISOString().split('T')[0];
+  const endStr = new Date(sprintEndDate).toISOString().split('T')[0];
+
+  // Fetch worklogs for all issues in parallel (batched to avoid rate limits)
+  const batchSize = 10;
+  for (let i = 0; i < issues.length; i += batchSize) {
+    const batch = issues.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(issue => getIssueWorklogs(issue.key))
+    );
+
+    results.forEach(worklogs => {
+      worklogs.forEach(wl => {
+        const logDate = new Date(wl.started).toISOString().split('T')[0];
+        // Only count worklogs within sprint date range
+        if (logDate >= startStr && logDate <= endStr) {
+          if (!dailyTimeLogged[logDate]) dailyTimeLogged[logDate] = 0;
+          dailyTimeLogged[logDate] += secondsToHours(wl.timeSpentSeconds);
+        }
+      });
+    });
+  }
+
+  return dailyTimeLogged;
 };
 
 /**
@@ -243,9 +312,13 @@ resolver.define('saveConfig', async ({ payload, context }) => {
 /**
  * Get Burndown Chart data
  * 
- * UPDATED LOGIC per SRS v2.1:
- * - Ideal Line: Based on ORIGINAL ESTIMATE (sum of all tasks at sprint start)
- * - Actual Remaining: Current remaining estimate
+ * FIXED LOGIC:
+ * - Ideal Line: Based on totalOriginalEstimate (sum of task OEs at sprint start)
+ *   → Linear decrease from totalOriginalEstimate to 0 over working days
+ * - Remaining: Calculated PER-DAY using worklogs
+ *   → Remain(day0) = totalOriginalEstimate
+ *   → Remain(dayN) = Remain(dayN-1) - Logged(dayN) + Added(dayN) - Removed(dayN)
+ * - Worklogs: Fetched via dedicated worklog API (not embedded field)
  * - Scope Added: Tasks added after sprint start (stacked on top, orange)
  * - Scope Removed: Tasks removed from sprint (negative bar, red)
  */
@@ -288,8 +361,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
     
     // Filter by assignee if specified
     let issues = allIssues;
-    // teamSize = số lượng assignees thực tế trong sprint
-    // Chỉ fallback sang config nếu không tìm thấy assignees
+    // teamSize = number of actual assignees in sprint
     let teamSize = allAssignees.length || configTeamSize || 1;
     
     // Deep clone baseline to avoid mutating the original
@@ -305,15 +377,12 @@ resolver.define('getBurndownData', async ({ payload }) => {
       );
       teamSize = 1;
       
-      // Filter baseline by assignee using stored assignee info, 
-      // falling back to current issue data
+      // Filter baseline by assignee
       filteredBaseline.issues = filteredBaseline.issues.filter(b => {
-        // First check stored assignee info in baseline
         if (b.assigneeDisplayName || b.assigneeAccountId) {
           return b.assigneeDisplayName === assignee ||
                  b.assigneeAccountId === assignee;
         }
-        // Fallback: check current issue data
         const fullIssue = allIssues.find(i => i.key === b.key);
         return fullIssue?.fields.assignee?.displayName === assignee ||
                fullIssue?.fields.assignee?.accountId === assignee;
@@ -323,40 +392,18 @@ resolver.define('getBurndownData', async ({ payload }) => {
     // Calculate dates
     const startDate = new Date(sprint.startDate);
     const endDate = new Date(sprint.endDate);
-
-    // Working days = tất cả ngày làm việc (Mon-Fri) từ startDate đến endDate (inclusive)
-    // Ví dụ: Sprint 23/02 (Mon) → 06/03 (Fri) = 10 working days
-    // maxCapacity = 10 × 8 × 6 = 480h
     const workingDays = countWorkingDays(startDate, endDate);
 
-    // Calculate MAX CAPACITY (for Ideal Line)
+    // ============================================================
+    // MAX CAPACITY (for display only, NOT used for Ideal line)
     // Formula: workingDays × 8 hours × teamSize
-    // Ví dụ: Sprint 23/02 → 06/03 = 10 working days
-    //   maxCapacity = 10 × 8 × 6 = 480h
+    // ============================================================
     const maxCapacity = workingDays * HOURS_PER_DAY * teamSize;
 
-    // ====== DEBUG LOG ======
-    console.log('[BURNDOWN DEBUG]', JSON.stringify({
-      sprintStart: sprint.startDate,
-      sprintEnd: sprint.endDate,
-      workingDays,
-      teamSize,
-      maxCapacity,
-      assignee: assignee || 'All',
-      allAssigneesCount: allAssignees.length,
-      configTeamSize,
-      totalIssues: allIssues.length,
-      filteredIssues: issues.length,
-      baselineIssues: filteredBaseline.issues?.length,
-      baselineHasSubtaskInfo: filteredBaseline.issues?.[0]?.isSubtask !== undefined,
-      baselineHasAssigneeInfo: filteredBaseline.issues?.[0]?.assigneeDisplayName !== undefined
-    }));
-    // ====== END DEBUG ======
-
     // ============================================================
-    // FIX: Original Estimate = only TASKS (not subtasks)
+    // ORIGINAL ESTIMATE = only TASKS (not subtasks) from baseline
+    // This is used for the IDEAL LINE starting point
     // ============================================================
-    // From baseline: filter out subtasks
     const baselineTasksOnly = filteredBaseline.issues.filter(b => !b.isSubtask);
     const totalOriginalEstimate = baselineTasksOnly.length > 0
       ? baselineTasksOnly.reduce((sum, item) => sum + (item.originalEstimate || 0), 0)
@@ -365,8 +412,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
           .reduce((sum, issue) => sum + secondsToHours(issue.fields.timeoriginalestimate), 0);
     
     // ============================================================
-    // Remaining & Time Logged = ALL issues (task + subtask)
-    // because work is logged on subtasks
+    // Current Remaining & Time Logged from Jira fields (for summary display)
     // ============================================================
     const currentRemaining = issues.reduce((sum, issue) => 
       sum + secondsToHours(issue.fields.timeestimate), 0
@@ -383,7 +429,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const currentKeys = new Set(issues.map(i => i.key));
     
     // Added: issues in current sprint but NOT in baseline
-    // (don't require created > startDate, as issue may have existed before but added to sprint later)
     const addedIssues = issues.filter(i => !baselineKeys.has(i.key));
     
     // Removed: issues in baseline but NOT in current sprint
@@ -402,28 +447,10 @@ resolver.define('getBurndownData', async ({ payload }) => {
     );
 
     // ============================================================
-    // WORKLOGS: Collect per-day time logged from all sprint issues
+    // WORKLOGS: Fetch per-day time logged via dedicated worklog API
+    // This ensures we get ALL worklogs (not just first 20)
     // ============================================================
-    const dailyTimeLogged = {};
-    let totalWorklogHours = 0;
-    issues.forEach(issue => {
-      const worklogs = issue.fields.worklog?.worklogs || [];
-      worklogs.forEach(wl => {
-        const logDate = new Date(wl.started).toISOString().split('T')[0];
-        if (!dailyTimeLogged[logDate]) dailyTimeLogged[logDate] = 0;
-        const hours = secondsToHours(wl.timeSpentSeconds);
-        dailyTimeLogged[logDate] += hours;
-        totalWorklogHours += hours;
-      });
-    });
-
-    // ============================================================
-    // STARTING REMAINING: Sum of ALL baseline OEs (tasks + subtasks)
-    // This is the total remaining work at sprint activation
-    // ============================================================
-    const startingRemaining = filteredBaseline.issues.reduce(
-      (sum, b) => sum + (b.originalEstimate || 0), 0
-    ) || (currentRemaining + totalSpent); // fallback nếu baseline chưa có OE
+    const dailyTimeLogged = await getAllWorklogs(issues, sprint.startDate, sprint.endDate);
 
     // ============================================================
     // SCOPE CHANGES BY DATE (for chart bars - tasks only)
@@ -480,22 +507,22 @@ resolver.define('getBurndownData', async ({ payload }) => {
       });
     }
 
-    // ====== DEBUG LOG 2 ======
-    console.log('[BURNDOWN DEBUG 2]', JSON.stringify({
+    // ====== DEBUG LOG ======
+    console.log('[BURNDOWN DEBUG]', JSON.stringify({
+      sprintStart: sprint.startDate,
+      sprintEnd: sprint.endDate,
+      workingDays,
+      teamSize,
+      maxCapacity,
       totalOriginalEstimate,
       currentRemaining,
       totalSpent,
-      startingRemaining,
-      totalWorklogHours,
       scopeAddedTotal,
       scopeRemovedTotal,
-      addedTasksCount: addedTasksOnly.length,
-      removedTasksCount: removedTasksOnly.length,
       dailyTimeLogged,
-      allAddedCount: allAddedIssues.length,
-      allRemovedCount: allRemovedIssues.length
+      assignee: assignee || 'All',
     }));
-    // ====== END DEBUG 2 ======
+    // ====== END DEBUG ======
 
     // ============================================================
     // GENERATE DATA POINTS
@@ -505,14 +532,22 @@ resolver.define('getBurndownData', async ({ payload }) => {
     let workingDayCount = 0;
     const startDateStr = startDate.toISOString().split('T')[0];
 
-    // IDEAL: Linear from maxCapacity → 0
-    // Loop skips startDate in count (0 → workingDays-1)
-    // dailyDecrease = maxCapacity / (workingDays - 1)
-    const dailyDecrease = workingDays > 1 ? maxCapacity / (workingDays - 1) : maxCapacity;
+    // ============================================================
+    // IDEAL LINE: Based on totalOriginalEstimate (NOT maxCapacity)
+    // Linear decrease from totalOriginalEstimate → 0 over working days
+    // dailyDecrease = totalOriginalEstimate / (workingDays - 1)
+    //   so that day 0 = totalOriginalEstimate, last working day = 0
+    // ============================================================
+    const dailyDecrease = workingDays > 1
+      ? totalOriginalEstimate / (workingDays - 1)
+      : totalOriginalEstimate;
 
-    // REMAINING: Forward calculation
-    // Start from baseline OE, subtract daily logged hours, adjust for scope
-    let runningRemaining = startingRemaining;
+    // ============================================================
+    // REMAINING: Forward calculation per-day
+    // Day 0 (sprint start): Remain = totalOriginalEstimate
+    // Day N: Remain = Remain(N-1) - Logged(N) + ScopeAdded(N) - ScopeRemoved(N)
+    // ============================================================
+    let runningRemaining = totalOriginalEstimate;
     let cumulativeLogged = 0;
 
     while (current <= endDate) {
@@ -525,21 +560,32 @@ resolver.define('getBurndownData', async ({ payload }) => {
         workingDayCount++;
       }
 
-      // IDEAL: Linear decrease from maxCapacity
-      const ideal = Math.max(0, maxCapacity - (dailyDecrease * workingDayCount));
+      // IDEAL: Linear decrease from totalOriginalEstimate
+      const ideal = Math.max(0, totalOriginalEstimate - (dailyDecrease * workingDayCount));
 
       const isPastOrToday = currentDate <= today;
 
-      // Per-day time logged from worklogs
+      // Per-day time logged from worklogs API
       const dayLogged = dailyTimeLogged[dateStr] || 0;
 
       // Scope changes for remaining (all issues)
       const dayScope = remainingScopeByDate[dateStr] || { added: 0, removed: 0 };
 
       // Update running remaining for past/today
-      if (isPastOrToday) {
+      if (isPastOrToday && dateStr !== startDateStr) {
+        // Only subtract/add from day 1 onwards (day 0 is the starting point)
         runningRemaining = runningRemaining - dayLogged + dayScope.added - dayScope.removed;
         cumulativeLogged += dayLogged;
+      } else if (isPastOrToday && dateStr === startDateStr) {
+        // On start date, also account for any worklogs logged on that day
+        const startDayLogged = dailyTimeLogged[startDateStr] || 0;
+        if (startDayLogged > 0) {
+          runningRemaining = runningRemaining - startDayLogged;
+          cumulativeLogged += startDayLogged;
+        }
+        // Also account for scope changes on start date (unlikely but possible)
+        const startScope = remainingScopeByDate[startDateStr] || { added: 0, removed: 0 };
+        runningRemaining = runningRemaining + startScope.added - startScope.removed;
       }
 
       // Scope changes for chart bars (tasks only)

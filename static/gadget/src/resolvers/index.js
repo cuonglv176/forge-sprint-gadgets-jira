@@ -18,7 +18,7 @@ const isWorkingDay = (date) => {
 };
 
 /**
- * Count working days between two dates
+ * Count working days between two dates (inclusive)
  */
 const countWorkingDays = (startDate, endDate) => {
   let count = 0;
@@ -105,23 +105,116 @@ const getSprint = async (sprintId) => {
  */
 const getSprintIssues = async (sprintId) => {
   const jql = `sprint = ${sprintId}`;
-  const fields = [
-    'summary', 'status', 'priority', 'assignee',
-    'timeoriginalestimate', 'timeestimate', 'timespent',
-    'duedate', 'created', 'updated'
-  ].join(',');
-  
-  const response = await api.asUser().requestJira(
-    route`/rest/api/3/search?jql=${jql}&maxResults=200&fields=${fields}`,
-    { headers: { 'Accept': 'application/json' } }
-  );
-  
-  if (!response.ok) {
-    throw new Error(`Failed to fetch issues: ${response.status}`);
+  let allIssues = [];
+  let nextPageToken = null;
+
+  do {
+    const requestBody = {
+      jql: jql,
+      fields: [
+        'summary', 'status', 'priority', 'assignee', 'issuetype',
+        'timeoriginalestimate', 'timeestimate', 'timespent',
+        'duedate', 'created', 'updated', 'fixVersions', 'parent'
+      ],
+      maxResults: 100
+    };
+
+    if (nextPageToken) {
+      requestBody.nextPageToken = nextPageToken;
+    }
+
+    const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[getSprintIssues] Failed: ${response.status} - ${errText}`);
+      throw new Error(`Failed to fetch issues: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const issues = data.issues || [];
+    allIssues = allIssues.concat(issues);
+    nextPageToken = data.nextPageToken || null;
+  } while (nextPageToken);
+
+  return allIssues;
+};
+
+/**
+ * Get ALL worklogs for a single issue (paginated)
+ * Jira embedded worklog only returns max 20, so we call the dedicated API
+ */
+const getIssueWorklogs = async (issueKey) => {
+  let allWorklogs = [];
+  let startAt = 0;
+  const maxResults = 100;
+
+  try {
+    do {
+      const response = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}/worklog?startAt=${startAt}&maxResults=${maxResults}`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+
+      if (!response.ok) {
+        console.error(`[getIssueWorklogs] Failed for ${issueKey}: ${response.status}`);
+        break;
+      }
+
+      const data = await response.json();
+      const worklogs = data.worklogs || [];
+      allWorklogs = allWorklogs.concat(worklogs);
+
+      // Check if there are more pages
+      if (startAt + worklogs.length >= (data.total || 0)) {
+        break;
+      }
+      startAt += maxResults;
+    } while (true);
+  } catch (error) {
+    console.error(`[getIssueWorklogs] Error for ${issueKey}:`, error);
   }
-  
-  const data = await response.json();
-  return data.issues || [];
+
+  return allWorklogs;
+};
+
+/**
+ * Get ALL worklogs for multiple issues
+ * Returns a map: { 'YYYY-MM-DD': totalHours }
+ */
+const getAllWorklogs = async (issues, sprintStartDate, sprintEndDate) => {
+  const dailyTimeLogged = {};
+  const startStr = new Date(sprintStartDate).toISOString().split('T')[0];
+  const endStr = new Date(sprintEndDate).toISOString().split('T')[0];
+
+  // Fetch worklogs for all issues in parallel (batched to avoid rate limits)
+  const batchSize = 10;
+  for (let i = 0; i < issues.length; i += batchSize) {
+    const batch = issues.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(issue => getIssueWorklogs(issue.key))
+    );
+
+    results.forEach(worklogs => {
+      worklogs.forEach(wl => {
+        const logDate = new Date(wl.started).toISOString().split('T')[0];
+        // Only count worklogs within sprint date range
+        if (logDate >= startStr && logDate <= endStr) {
+          if (!dailyTimeLogged[logDate]) dailyTimeLogged[logDate] = 0;
+          dailyTimeLogged[logDate] += secondsToHours(wl.timeSpentSeconds);
+        }
+      });
+    });
+  }
+
+  return dailyTimeLogged;
 };
 
 /**
@@ -147,7 +240,10 @@ const saveSprintBaseline = async (sprintId, issues) => {
       key: issue.key,
       priority: issue.fields.priority?.name,
       originalEstimate: secondsToHours(issue.fields.timeoriginalestimate),
-      addedAt: issue.fields.created
+      addedAt: issue.fields.created,
+      isSubtask: issue.fields.issuetype?.subtask === true || !!issue.fields.parent,
+      assigneeDisplayName: issue.fields.assignee?.displayName || null,
+      assigneeAccountId: issue.fields.assignee?.accountId || null
     }));
     
     await storage.set(`baseline-${sprintId}`, {
@@ -216,9 +312,13 @@ resolver.define('saveConfig', async ({ payload, context }) => {
 /**
  * Get Burndown Chart data
  * 
- * UPDATED LOGIC per SRS v2.1:
- * - Ideal Line: Based on ORIGINAL ESTIMATE (sum of all tasks at sprint start)
- * - Actual Remaining: Current remaining estimate
+ * FIXED LOGIC:
+ * - Ideal Line: Based on totalOriginalEstimate (sum of task OEs at sprint start)
+ *   → Linear decrease from totalOriginalEstimate to 0 over working days
+ * - Remaining: Calculated PER-DAY using worklogs
+ *   → Remain(day0) = totalOriginalEstimate
+ *   → Remain(dayN) = Remain(dayN-1) - Logged(dayN) + Added(dayN) - Removed(dayN)
+ * - Worklogs: Fetched via dedicated worklog API (not embedded field)
  * - Scope Added: Tasks added after sprint start (stacked on top, orange)
  * - Scope Removed: Tasks removed from sprint (negative bar, red)
  */
@@ -236,7 +336,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
       return { success: false, error: 'No active sprint found' };
     }
     
-    // Get sprint issues
+    // Get sprint issues (includes both tasks and subtasks)
     let allIssues = await getSprintIssues(sprint.id);
     
     // Get or create baseline
@@ -247,7 +347,12 @@ resolver.define('getBurndownData', async ({ payload }) => {
       baseline = await getSprintBaseline(sprint.id);
     }
     
-    // Get unique assignees
+    // Helper: check if an issue is a subtask
+    const isSubtask = (issue) => {
+      return issue.fields.issuetype?.subtask === true || !!issue.fields.parent;
+    };
+    
+    // Get unique assignees (from all issues including subtasks)
     const allAssignees = [...new Set(
       allIssues
         .map(i => i.fields.assignee?.displayName)
@@ -256,7 +361,14 @@ resolver.define('getBurndownData', async ({ payload }) => {
     
     // Filter by assignee if specified
     let issues = allIssues;
-    let teamSize = configTeamSize || allAssignees.length || 1;
+    // teamSize = number of actual assignees in sprint
+    let teamSize = allAssignees.length || configTeamSize || 1;
+    
+    // Deep clone baseline to avoid mutating the original
+    let filteredBaseline = baseline ? {
+      ...baseline,
+      issues: baseline.issues ? [...baseline.issues] : []
+    } : { issues: [] };
     
     if (assignee && assignee !== 'All') {
       issues = issues.filter(i => 
@@ -265,34 +377,43 @@ resolver.define('getBurndownData', async ({ payload }) => {
       );
       teamSize = 1;
       
-      // Also filter baseline
-      if (baseline?.issues) {
-        baseline.issues = baseline.issues.filter(b => {
-          const fullIssue = allIssues.find(i => i.key === b.key);
-          return fullIssue?.fields.assignee?.displayName === assignee ||
-                 fullIssue?.fields.assignee?.accountId === assignee;
-        });
-      }
+      // Filter baseline by assignee
+      filteredBaseline.issues = filteredBaseline.issues.filter(b => {
+        if (b.assigneeDisplayName || b.assigneeAccountId) {
+          return b.assigneeDisplayName === assignee ||
+                 b.assigneeAccountId === assignee;
+        }
+        const fullIssue = allIssues.find(i => i.key === b.key);
+        return fullIssue?.fields.assignee?.displayName === assignee ||
+               fullIssue?.fields.assignee?.accountId === assignee;
+      });
     }
     
     // Calculate dates
     const startDate = new Date(sprint.startDate);
     const endDate = new Date(sprint.endDate);
     const workingDays = countWorkingDays(startDate, endDate);
-    
-    // Calculate MAX CAPACITY (for Ideal Line)
+
+    // ============================================================
+    // MAX CAPACITY (for display only, NOT used for Ideal line)
     // Formula: workingDays × 8 hours × teamSize
-    // For individual member: workingDays × 8 × 1
+    // ============================================================
     const maxCapacity = workingDays * HOURS_PER_DAY * teamSize;
+
+    // ============================================================
+    // ORIGINAL ESTIMATE = only TASKS (not subtasks) from baseline
+    // This is used for the IDEAL LINE starting point
+    // ============================================================
+    const baselineTasksOnly = filteredBaseline.issues.filter(b => !b.isSubtask);
+    const totalOriginalEstimate = baselineTasksOnly.length > 0
+      ? baselineTasksOnly.reduce((sum, item) => sum + (item.originalEstimate || 0), 0)
+      : issues
+          .filter(i => !isSubtask(i))
+          .reduce((sum, issue) => sum + secondsToHours(issue.fields.timeoriginalestimate), 0);
     
-    // Calculate ORIGINAL ESTIMATE from baseline (for metrics display)
-    const totalOriginalEstimate = baseline?.issues?.reduce((sum, item) => 
-      sum + (item.originalEstimate || 0), 0
-    ) || issues.reduce((sum, issue) => 
-      sum + secondsToHours(issue.fields.timeoriginalestimate), 0
-    );
-    
-    // Current metrics
+    // ============================================================
+    // Current Remaining & Time Logged from Jira fields (for summary display)
+    // ============================================================
     const currentRemaining = issues.reduce((sum, issue) => 
       sum + secondsToHours(issue.fields.timeestimate), 0
     );
@@ -301,90 +422,187 @@ resolver.define('getBurndownData', async ({ payload }) => {
       sum + secondsToHours(issue.fields.timespent), 0
     );
     
-    // Identify scope changes
-    const baselineKeys = new Set(baseline?.issues?.map(i => i.key) || []);
+    // ============================================================
+    // Scope Changes: compare baseline vs current (tasks only for scope)
+    // ============================================================
+    const baselineKeys = new Set(filteredBaseline.issues.map(i => i.key));
     const currentKeys = new Set(issues.map(i => i.key));
     
-    const addedIssues = issues.filter(i => {
-      const created = new Date(i.fields.created);
-      return created > startDate && !baselineKeys.has(i.key);
-    });
+    // Added: issues in current sprint but NOT in baseline
+    const addedIssues = issues.filter(i => !baselineKeys.has(i.key));
     
-    const removedIssues = baseline?.issues?.filter(b => !currentKeys.has(b.key)) || [];
+    // Removed: issues in baseline but NOT in current sprint
+    const removedIssues = filteredBaseline.issues.filter(b => !currentKeys.has(b.key));
     
-    // Calculate scope totals
-    const scopeAddedTotal = addedIssues.reduce((sum, issue) => 
+    // Calculate scope totals (tasks only for meaningful scope tracking)
+    const addedTasksOnly = addedIssues.filter(i => !isSubtask(i));
+    const removedTasksOnly = removedIssues.filter(b => !b.isSubtask);
+    
+    const scopeAddedTotal = addedTasksOnly.reduce((sum, issue) => 
       sum + secondsToHours(issue.fields.timeoriginalestimate), 0
     );
     
-    const scopeRemovedTotal = removedIssues.reduce((sum, item) => 
+    const scopeRemovedTotal = removedTasksOnly.reduce((sum, item) =>
       sum + (item.originalEstimate || 0), 0
     );
-    
-    // Generate data points
-    const dataPoints = [];
-    const current = new Date(startDate);
-    let workingDayCount = 0;
-    // Ideal line starts from maxCapacity and decreases linearly to 0
-    const dailyDecrease = maxCapacity / workingDays;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // Track cumulative scope changes by date
+
+    // ============================================================
+    // WORKLOGS: Fetch per-day time logged via dedicated worklog API
+    // This ensures we get ALL worklogs (not just first 20)
+    // ============================================================
+    const dailyTimeLogged = await getAllWorklogs(issues, sprint.startDate, sprint.endDate);
+
+    // ============================================================
+    // SCOPE CHANGES BY DATE (for chart bars - tasks only)
+    // ============================================================
     const scopeChangesByDate = {};
-    
-    // Track added issues by date
-    addedIssues.forEach(issue => {
+
+    // Track added issues by date (tasks only for chart bars)
+    addedTasksOnly.forEach(issue => {
       const addedDate = new Date(issue.fields.created).toISOString().split('T')[0];
       if (!scopeChangesByDate[addedDate]) {
         scopeChangesByDate[addedDate] = { added: 0, removed: 0 };
       }
       scopeChangesByDate[addedDate].added += secondsToHours(issue.fields.timeoriginalestimate);
     });
-    
+
     // Track removed issues - use today's date as removal date
-    // (changelog data not available, so mark on today or last working day)
-    if (removedIssues.length > 0) {
-      const removedDate = today <= endDate 
-        ? today.toISOString().split('T')[0]
-        : endDate.toISOString().split('T')[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
+    if (removedTasksOnly.length > 0) {
+      const removedDate = today <= endDate ? todayStr : endDate.toISOString().split('T')[0];
       if (!scopeChangesByDate[removedDate]) {
         scopeChangesByDate[removedDate] = { added: 0, removed: 0 };
       }
-      removedIssues.forEach(item => {
+      removedTasksOnly.forEach(item => {
         scopeChangesByDate[removedDate].removed += (item.originalEstimate || 0);
       });
     }
-    
-    // Generate data points for ALL calendar days (including weekends)
-    while (current <= endDate) {
-      if (isWorkingDay(current) && current > startDate) {
-        workingDayCount++;
+
+    // ============================================================
+    // SCOPE CHANGES FOR REMAINING (ALL issues including subtasks)
+    // Used in forward remaining calculation
+    // ============================================================
+    const allAddedIssues = issues.filter(i => !baselineKeys.has(i.key));
+    const allRemovedIssues = filteredBaseline.issues.filter(b => !currentKeys.has(b.key));
+
+    const remainingScopeByDate = {};
+    allAddedIssues.forEach(issue => {
+      const addedDate = new Date(issue.fields.created).toISOString().split('T')[0];
+      if (!remainingScopeByDate[addedDate]) {
+        remainingScopeByDate[addedDate] = { added: 0, removed: 0 };
       }
-      
-      // IDEAL: Based on MAX CAPACITY, decreasing linearly to 0
-      const ideal = Math.max(0, maxCapacity - (dailyDecrease * workingDayCount));
-      
+      remainingScopeByDate[addedDate].added += secondsToHours(issue.fields.timeoriginalestimate);
+    });
+
+    if (allRemovedIssues.length > 0) {
+      const removedDate = today <= endDate ? todayStr : endDate.toISOString().split('T')[0];
+      if (!remainingScopeByDate[removedDate]) {
+        remainingScopeByDate[removedDate] = { added: 0, removed: 0 };
+      }
+      allRemovedIssues.forEach(item => {
+        remainingScopeByDate[removedDate].removed += (item.originalEstimate || 0);
+      });
+    }
+
+    // ====== DEBUG LOG ======
+    console.log('[BURNDOWN DEBUG]', JSON.stringify({
+      sprintStart: sprint.startDate,
+      sprintEnd: sprint.endDate,
+      workingDays,
+      teamSize,
+      maxCapacity,
+      totalOriginalEstimate,
+      currentRemaining,
+      totalSpent,
+      scopeAddedTotal,
+      scopeRemovedTotal,
+      dailyTimeLogged,
+      assignee: assignee || 'All',
+    }));
+    // ====== END DEBUG ======
+
+    // ============================================================
+    // GENERATE DATA POINTS
+    // ============================================================
+    const dataPoints = [];
+    const current = new Date(startDate);
+    let workingDayCount = 0;
+    const startDateStr = startDate.toISOString().split('T')[0];
+
+    // ============================================================
+    // IDEAL LINE: Based on totalOriginalEstimate (NOT maxCapacity)
+    // Linear decrease from totalOriginalEstimate → 0 over working days
+    // dailyDecrease = totalOriginalEstimate / (workingDays - 1)
+    //   so that day 0 = totalOriginalEstimate, last working day = 0
+    // ============================================================
+    const dailyDecrease = workingDays > 1
+      ? totalOriginalEstimate / (workingDays - 1)
+      : totalOriginalEstimate;
+
+    // ============================================================
+    // REMAINING: Forward calculation per-day
+    // Day 0 (sprint start): Remain = totalOriginalEstimate
+    // Day N: Remain = Remain(N-1) - Logged(N) + ScopeAdded(N) - ScopeRemoved(N)
+    // ============================================================
+    let runningRemaining = totalOriginalEstimate;
+    let cumulativeLogged = 0;
+
+    while (current <= endDate) {
       const dateStr = current.toISOString().split('T')[0];
       const currentDate = new Date(current);
       currentDate.setHours(0, 0, 0, 0);
-      
-      // Only show remaining for past/today dates
+
+      // Count working days after startDate (for ideal line)
+      if (isWorkingDay(current) && dateStr !== startDateStr) {
+        workingDayCount++;
+      }
+
+      // IDEAL: Linear decrease from totalOriginalEstimate
+      const ideal = Math.max(0, totalOriginalEstimate - (dailyDecrease * workingDayCount));
+
       const isPastOrToday = currentDate <= today;
-      
-      // Get scope changes for this date
+
+      // Per-day time logged from worklogs API
+      const dayLogged = dailyTimeLogged[dateStr] || 0;
+
+      // Scope changes for remaining (all issues)
+      const dayScope = remainingScopeByDate[dateStr] || { added: 0, removed: 0 };
+
+      // Update running remaining for past/today
+      if (isPastOrToday && dateStr !== startDateStr) {
+        // Only subtract/add from day 1 onwards (day 0 is the starting point)
+        runningRemaining = runningRemaining - dayLogged + dayScope.added - dayScope.removed;
+        cumulativeLogged += dayLogged;
+      } else if (isPastOrToday && dateStr === startDateStr) {
+        // On start date, also account for any worklogs logged on that day
+        const startDayLogged = dailyTimeLogged[startDateStr] || 0;
+        if (startDayLogged > 0) {
+          runningRemaining = runningRemaining - startDayLogged;
+          cumulativeLogged += startDayLogged;
+        }
+        // Also account for scope changes on start date (unlikely but possible)
+        const startScope = remainingScopeByDate[startDateStr] || { added: 0, removed: 0 };
+        runningRemaining = runningRemaining + startScope.added - startScope.removed;
+      }
+
+      // Scope changes for chart bars (tasks only)
       const scopeChange = scopeChangesByDate[dateStr] || { added: 0, removed: 0 };
-      
+
       dataPoints.push({
         date: dateStr,
         displayDate: formatDate(dateStr),
         ideal: Math.round(ideal * 10) / 10,
-        remaining: isPastOrToday ? currentRemaining : null,
-        timeLogged: isPastOrToday ? totalSpent : null,
+        remaining: isPastOrToday ? Math.round(runningRemaining * 10) / 10 : null,
+        timeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
         added: scopeChange.added > 0 ? Math.round(scopeChange.added * 10) / 10 : 0,
-        removed: scopeChange.removed > 0 ? -Math.round(scopeChange.removed * 10) / 10 : 0
+        removed: scopeChange.removed > 0 ? -Math.round(scopeChange.removed * 10) / 10 : 0,
+        // Debug: per-day logged hours
+        dayLogged: Math.round(dayLogged * 10) / 10
       });
-      
+
       current.setDate(current.getDate() + 1);
     }
     
@@ -404,8 +622,8 @@ resolver.define('getBurndownData', async ({ payload }) => {
         workingDays,
         teamSize,
         assignees: allAssignees,
-        addedIssuesCount: addedIssues.length,
-        removedIssuesCount: removedIssues.length
+        addedIssuesCount: addedTasksOnly.length,
+        removedIssuesCount: removedTasksOnly.length
       }
     };
   } catch (error) {
@@ -489,7 +707,7 @@ resolver.define('getSprintHealth', async ({ payload }) => {
         remaining,
         totalActual,
         variance: Math.round(variance * 10) / 10
-      });
+      };
     });
     
     return {
@@ -743,10 +961,100 @@ resolver.define('getScopeChanges', async ({ payload }) => {
 });
 
 /**
- * Get High Priority Items
- * Filter: Priority = Highest OR High
+ * Get Priority Items
+ * 
+ * Business Logic per SRS v2.1:
+ * - Default: Top 5 highest-priority tasks
+ * - Expand: ALL sprint tasks sorted by priority
+ * - Ordered by: Priority (highest first) → Due date
  */
 resolver.define('getHighPriorityItems', async ({ payload }) => {
+  try {
+    const { boardId, assignee, expand } = payload;
+    
+    if (!boardId) {
+      return { success: false, error: 'Board ID is required' };
+    }
+    
+    const sprint = await getActiveSprint(boardId);
+    if (!sprint) {
+      return { success: false, error: 'No active sprint found' };
+    }
+    
+    let issues = await getSprintIssues(sprint.id);
+    
+    if (assignee && assignee !== 'All') {
+      issues = issues.filter(i => 
+        i.fields.assignee?.displayName === assignee ||
+        i.fields.assignee?.accountId === assignee
+      );
+    }
+    
+    // Priority order mapping
+    const priorityOrder = { 'Highest': 1, 'High': 2, 'Medium': 3, 'Low': 4, 'Lowest': 5 };
+    const doneStatuses = ['done', 'closed', 'resolved'];
+    
+    // Map all issues with priority info
+    const allItems = issues.map(issue => ({
+      key: issue.key,
+      summary: issue.fields.summary,
+      assignee: issue.fields.assignee?.displayName || 'Unassigned',
+      assigneeAvatar: issue.fields.assignee?.avatarUrls?.['24x24'],
+      priority: issue.fields.priority?.name || 'Medium',
+      status: issue.fields.status?.name,
+      dueDate: issue.fields.duedate,
+      originalEstimate: secondsToHours(issue.fields.timeoriginalestimate),
+      remainingEstimate: secondsToHours(issue.fields.timeestimate),
+      timeSpent: secondsToHours(issue.fields.timespent)
+    }));
+    
+    // Sort: Priority (Highest first) → Status (not done first) → Due Date
+    allItems.sort((a, b) => {
+      const pA = priorityOrder[a.priority] || 3;
+      const pB = priorityOrder[b.priority] || 3;
+      if (pA !== pB) return pA - pB;
+      
+      const aIsDone = doneStatuses.some(s => a.status?.toLowerCase().includes(s));
+      const bIsDone = doneStatuses.some(s => b.status?.toLowerCase().includes(s));
+      if (aIsDone !== bIsDone) return aIsDone ? 1 : -1;
+      
+      const dateA = a.dueDate ? new Date(a.dueDate) : new Date('9999-12-31');
+      const dateB = b.dueDate ? new Date(b.dueDate) : new Date('9999-12-31');
+      return dateA - dateB;
+    });
+    
+    // If expand mode, return ALL items; otherwise return top 5
+    const displayItems = expand ? allItems : allItems.slice(0, 5);
+    
+    return {
+      success: true,
+      data: {
+        items: displayItems,
+        total: allItems.length,
+        highestCount: allItems.filter(i => i.priority === 'Highest').length,
+        highCount: allItems.filter(i => i.priority === 'High').length,
+        mediumCount: allItems.filter(i => i.priority === 'Medium').length,
+        lowCount: allItems.filter(i => i.priority === 'Low').length,
+        lowestCount: allItems.filter(i => i.priority === 'Lowest').length,
+        sprintName: sprint.name,
+        isExpanded: !!expand
+      }
+    };
+  } catch (error) {
+    console.error('Error in getHighPriorityItems:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * Get Release Progress
+ * 
+ * Business Logic per SRS:
+ * - Tracks delivery progress of planned releases within sprint scope
+ * - Each release displays a progress bar
+ * - Progress = Done issues / Total issues per fixVersion
+ */
+resolver.define('getReleaseData', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
     
@@ -768,56 +1076,92 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
       );
     }
     
-    // Filter high priority
-    const highPriorityItems = issues
-      .filter(issue => {
-        const priority = issue.fields.priority?.name?.toLowerCase();
-        return priority === 'highest' || priority === 'high';
-      })
-      .map(issue => ({
-        key: issue.key,
-        summary: issue.fields.summary,
-        assignee: issue.fields.assignee?.displayName || 'Unassigned',
-        assigneeAvatar: issue.fields.assignee?.avatarUrls?.['24x24'],
-        priority: issue.fields.priority?.name,
-        status: issue.fields.status?.name,
-        dueDate: issue.fields.duedate,
-        originalEstimate: secondsToHours(issue.fields.timeoriginalestimate),
-        remainingEstimate: secondsToHours(issue.fields.timeestimate),
-        timeSpent: secondsToHours(issue.fields.timespent)
-      }));
+    const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
     
-    // Sort: Priority (Highest first), then Status (not done first), then Due Date
-    const doneStatuses = ['done', 'closed', 'resolved'];
-    highPriorityItems.sort((a, b) => {
-      // Priority
-      const pA = a.priority === 'Highest' ? 1 : 2;
-      const pB = b.priority === 'Highest' ? 1 : 2;
-      if (pA !== pB) return pA - pB;
-      
-      // Status (not done first)
-      const aIsDone = doneStatuses.some(s => a.status?.toLowerCase().includes(s));
-      const bIsDone = doneStatuses.some(s => b.status?.toLowerCase().includes(s));
-      if (aIsDone !== bIsDone) return aIsDone ? 1 : -1;
-      
-      // Due Date
-      const dateA = a.dueDate ? new Date(a.dueDate) : new Date('9999-12-31');
-      const dateB = b.dueDate ? new Date(b.dueDate) : new Date('9999-12-31');
+    // Aggregate issues by fixVersion
+    const releaseMap = new Map();
+    
+    issues.forEach(issue => {
+      const versions = issue.fields.fixVersions || [];
+      versions.forEach(version => {
+        if (!releaseMap.has(version.id)) {
+          releaseMap.set(version.id, {
+            id: version.id,
+            name: version.name,
+            description: version.description || '',
+            releaseDate: version.releaseDate || null,
+            released: version.released || false,
+            archived: version.archived || false,
+            totalIssues: 0,
+            doneIssues: 0,
+            totalEstimate: 0,
+            doneEstimate: 0,
+            issues: []
+          });
+        }
+        
+        const release = releaseMap.get(version.id);
+        const status = issue.fields.status?.name?.toLowerCase() || '';
+        const isDone = doneStatuses.some(s => status.includes(s));
+        const estimate = secondsToHours(issue.fields.timeoriginalestimate);
+        
+        release.totalIssues++;
+        release.totalEstimate += estimate;
+        
+        if (isDone) {
+          release.doneIssues++;
+          release.doneEstimate += estimate;
+        }
+        
+        release.issues.push({
+          key: issue.key,
+          summary: issue.fields.summary,
+          status: issue.fields.status?.name,
+          priority: issue.fields.priority?.name,
+          assignee: issue.fields.assignee?.displayName || 'Unassigned',
+          isDone,
+          estimate
+        });
+      });
+    });
+    
+    // Convert to array and calculate progress
+    const releases = Array.from(releaseMap.values()).map(release => ({
+      ...release,
+      progress: release.totalIssues > 0 
+        ? Math.round((release.doneIssues / release.totalIssues) * 100) 
+        : 0,
+      estimateProgress: release.totalEstimate > 0
+        ? Math.round((release.doneEstimate / release.totalEstimate) * 100)
+        : 0,
+      totalEstimate: Math.round(release.totalEstimate * 10) / 10,
+      doneEstimate: Math.round(release.doneEstimate * 10) / 10
+    }));
+    
+    // Sort: unreleased first, then by release date
+    releases.sort((a, b) => {
+      if (a.released !== b.released) return a.released ? 1 : -1;
+      const dateA = a.releaseDate ? new Date(a.releaseDate) : new Date('9999-12-31');
+      const dateB = b.releaseDate ? new Date(b.releaseDate) : new Date('9999-12-31');
       return dateA - dateB;
     });
+    
+    // Count issues without any fixVersion
+    const unversionedCount = issues.filter(
+      issue => !issue.fields.fixVersions || issue.fields.fixVersions.length === 0
+    ).length;
     
     return {
       success: true,
       data: {
-        items: highPriorityItems,
-        total: highPriorityItems.length,
-        highestCount: highPriorityItems.filter(i => i.priority === 'Highest').length,
-        highCount: highPriorityItems.filter(i => i.priority === 'High').length,
+        releases,
+        totalReleases: releases.length,
+        unversionedCount,
         sprintName: sprint.name
       }
     };
   } catch (error) {
-    console.error('Error in getHighPriorityItems:', error);
+    console.error('Error in getReleaseData:', error);
     return { success: false, error: error.message };
   }
 });

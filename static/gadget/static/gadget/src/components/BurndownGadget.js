@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@forge/bridge';
+import GadgetWrapper from './GadgetWrapper';
 import {
   ComposedChart,
   Bar,
@@ -20,6 +21,7 @@ const BurndownGadget = () => {
   const [error, setError] = useState(null);
   const [config, setConfig] = useState({ boardId: null, teamSize: 10 });
   const [selectedMember, setSelectedMember] = useState('All');
+  const [showDebug, setShowDebug] = useState(false);
 
   // Load configuration
   const loadConfig = useCallback(async () => {
@@ -169,15 +171,16 @@ const BurndownGadget = () => {
     );
   };
 
-  // Not configured
+  // Not configured - wrapped in GadgetWrapper which handles this
   if (!config.boardId && !loading) {
     return (
-      <div className="configure-message">
-        <p>⚙️ Please configure this gadget</p>
-        <p style={{ fontSize: '12px', marginTop: '8px' }}>
-          Click the edit button to select a Scrum board
-        </p>
-      </div>
+      <GadgetWrapper
+        gadgetTitle="Sprint Burndown Chart"
+        gadgetSubtitle=""
+        onConfigChange={loadConfig}
+      >
+        <div className="gadget" />
+      </GadgetWrapper>
     );
   }
 
@@ -223,8 +226,18 @@ const BurndownGadget = () => {
     removedIssuesCount
   } = data;
 
+  // Calculate daily decrease for debug display
+  const dailyDecrease = workingDays > 1
+    ? totalOriginalEstimate / (workingDays - 1)
+    : totalOriginalEstimate;
+
   return (
-    <div className="gadget">
+    <GadgetWrapper
+      gadgetTitle="Sprint Burndown Chart"
+      gadgetSubtitle={sprintName}
+      onConfigChange={loadConfig}
+    >
+      <div className="gadget">
       {/* Header */}
       <div className="gadget-header">
         <div>
@@ -365,34 +378,28 @@ const BurndownGadget = () => {
               fill="#DE350B"
               name="Scope Removed"
               radius={[0, 0, 2, 2]}
-              stackId="scope"
+              stackId="burndown"
             />
 
-            {/* Remaining Estimate (Main Bar) - Blue above baseline, Red below baseline */}
+            {/* Remaining Estimate (Main Bar) - Blue above baseline */}
             <Bar
               dataKey="remaining"
               name="Remaining"
-              radius={[2, 2, 0, 0]}
-              stackId="main"
-            >
-              {dataPoints.map((entry, index) => (
-                <Cell
-                  key={`cell-remaining-${index}`}
-                  fill={entry.remaining != null && entry.remaining < 0 ? '#DE350B' : '#0065FF'}
-                />
-              ))}
-            </Bar>
+              fill="#0065FF"
+              radius={[0, 0, 0, 0]}
+              stackId="burndown"
+            />
 
-            {/* Scope Added (Stacked on Top of Remaining) */}
+            {/* Scope Added (Stacked on Top of Remaining, Orange) */}
             <Bar
               dataKey="added"
               fill="#FF991F"
               name="Scope Added"
               radius={[2, 2, 0, 0]}
-              stackId="main"
+              stackId="burndown"
             />
 
-            {/* Ideal Burndown Line (Based on Max Capacity, linear to 0) */}
+            {/* Ideal Burndown Line (Based on Original Estimate, linear to 0) */}
             <Line
               type="linear"
               dataKey="ideal"
@@ -460,12 +467,112 @@ const BurndownGadget = () => {
         borderTop: '1px solid #DFE1E6'
       }}>
         <strong>Legend:</strong>
-        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear burndown from Max Capacity ({maxCapacity}h)
-        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = Current remaining work
+        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear burndown from Original Estimate ({totalOriginalEstimate}h)
+        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = Per-day remaining (OE - logged + added - removed)
         <span style={{ color: '#FF991F', marginLeft: '12px' }}>■</span> Added = Tasks added after sprint start
         <span style={{ color: '#DE350B', marginLeft: '12px' }}>■</span> Removed = Tasks removed from sprint (below baseline)
       </div>
+
+      {/* Debug Panel */}
+      <div style={{ marginTop: '12px', borderTop: '2px solid #FF991F' }}>
+        <button
+          onClick={() => setShowDebug(!showDebug)}
+          style={{
+            background: '#FFF7E6',
+            border: '1px solid #FFE7BA',
+            borderRadius: '3px',
+            padding: '4px 12px',
+            cursor: 'pointer',
+            fontSize: '11px',
+            fontWeight: '600',
+            color: '#172B4D',
+            marginTop: '8px'
+          }}
+        >
+          {showDebug ? '▼ Hide Debug' : '► Show Debug'}
+        </button>
+
+        {showDebug && (
+          <div style={{
+            marginTop: '8px',
+            padding: '12px',
+            background: '#F4F5F7',
+            border: '1px solid #DFE1E6',
+            borderRadius: '3px',
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            lineHeight: '1.6',
+            whiteSpace: 'pre-wrap',
+            maxHeight: '400px',
+            overflow: 'auto'
+          }}>
+            <div style={{ fontWeight: '700', marginBottom: '8px', color: '#DE350B' }}>🔍 DEBUG DATA</div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Capacity ──</div>
+            <div>workingDays = {workingDays}</div>
+            <div>teamSize = {teamSize}</div>
+            <div>maxCapacity = {workingDays} × 8 × {teamSize} = <b>{maxCapacity}h</b></div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Ideal Line ──</div>
+            <div>startValue = totalOriginalEstimate = <b>{totalOriginalEstimate}h</b></div>
+            <div>dailyDecrease = {totalOriginalEstimate} / ({workingDays} - 1) = <b>{dailyDecrease.toFixed(2)}h/day</b></div>
+            <div>endValue = 0h (at last working day)</div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Estimates ──</div>
+            <div>totalOriginalEstimate (tasks only) = <b>{totalOriginalEstimate}h</b></div>
+            <div>currentRemaining (Jira field) = <b>{currentRemaining}h</b></div>
+            <div>totalSpent (Jira field) = <b>{totalSpent}h</b></div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Remaining Calculation ──</div>
+            <div>Formula: Remain(day0) = totalOriginalEstimate = {totalOriginalEstimate}h</div>
+            <div>Formula: Remain(dayN) = Remain(dayN-1) - Logged(dayN) + Added(dayN) - Removed(dayN)</div>
+            <div>Source: Worklogs fetched via /rest/api/3/issue/KEY/worklog API</div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Scope Changes ──</div>
+            <div>scopeAdded = +{scopeAddedTotal}h ({addedIssuesCount} tasks)</div>
+            <div>scopeRemoved = -{scopeRemovedTotal}h ({removedIssuesCount} tasks)</div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Member Filter ──</div>
+            <div>selectedMember = "{selectedMember}"</div>
+            <div>assignees = [{assignees?.join(', ')}]</div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Sprint ──</div>
+            <div>sprintName = {sprintName}</div>
+            <div>startDate = {sprintStartDate}</div>
+            <div>endDate = {sprintEndDate}</div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Data Points ({dataPoints?.length}) ──</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px', marginTop: '4px' }}>
+              <thead>
+                <tr style={{ background: '#DFE1E6' }}>
+                  <th style={{ padding: '2px 4px', textAlign: 'left', border: '1px solid #C1C7D0' }}>Date</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Ideal</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Remain</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>DayLog</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>CumLog</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Added</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Removed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dataPoints?.map((dp, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#F4F5F7' }}>
+                    <td style={{ padding: '2px 4px', border: '1px solid #C1C7D0' }}>{dp.date}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>{dp.ideal}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>{dp.remaining ?? '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.dayLogged ?? '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.timeLogged ?? '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#FF991F' }}>{dp.added || '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#DE350B' }}>{dp.removed || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
+    </GadgetWrapper>
   );
 };
 

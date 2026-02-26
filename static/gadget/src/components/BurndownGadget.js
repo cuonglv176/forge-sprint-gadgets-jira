@@ -226,6 +226,11 @@ const BurndownGadget = () => {
     removedIssuesCount
   } = data;
 
+  // Calculate daily decrease for debug display
+  const dailyDecrease = workingDays > 1
+    ? totalOriginalEstimate / (workingDays - 1)
+    : totalOriginalEstimate;
+
   return (
     <GadgetWrapper
       gadgetTitle="Sprint Burndown Chart"
@@ -368,7 +373,6 @@ const BurndownGadget = () => {
             />
 
             {/* Scope Removed (Negative Bar - Below Baseline, Red) */}
-            {/* All bars share same stackId so stackOffset="sign" separates +/- correctly */}
             <Bar
               dataKey="removed"
               fill="#DE350B"
@@ -395,7 +399,7 @@ const BurndownGadget = () => {
               stackId="burndown"
             />
 
-            {/* Ideal Burndown Line (Based on Max Capacity, linear to 0) */}
+            {/* Ideal Burndown Line (Based on Original Estimate, linear to 0) */}
             <Line
               type="linear"
               dataKey="ideal"
@@ -463,8 +467,8 @@ const BurndownGadget = () => {
         borderTop: '1px solid #DFE1E6'
       }}>
         <strong>Legend:</strong>
-        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear burndown from Max Capacity ({maxCapacity}h)
-        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = Current remaining work
+        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear burndown from Original Estimate ({totalOriginalEstimate}h)
+        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = Per-day remaining (OE - logged + added - removed)
         <span style={{ color: '#FF991F', marginLeft: '12px' }}>■</span> Added = Tasks added after sprint start
         <span style={{ color: '#DE350B', marginLeft: '12px' }}>■</span> Removed = Tasks removed from sprint (below baseline)
       </div>
@@ -507,13 +511,22 @@ const BurndownGadget = () => {
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Capacity ──</div>
             <div>workingDays = {workingDays}</div>
             <div>teamSize = {teamSize}</div>
-            <div>maxCapacity = {workingDays} × {8} × {teamSize} = <b>{maxCapacity}h</b></div>
-            <div>dailyDecrease = {maxCapacity} / ({workingDays} - 1) = <b>{workingDays > 1 ? (maxCapacity / (workingDays - 1)).toFixed(2) : maxCapacity}h/day</b></div>
+            <div>maxCapacity = {workingDays} × 8 × {teamSize} = <b>{maxCapacity}h</b></div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Ideal Line ──</div>
+            <div>startValue = totalOriginalEstimate = <b>{totalOriginalEstimate}h</b></div>
+            <div>dailyDecrease = {totalOriginalEstimate} / ({workingDays} - 1) = <b>{dailyDecrease.toFixed(2)}h/day</b></div>
+            <div>endValue = 0h (at last working day)</div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Estimates ──</div>
             <div>totalOriginalEstimate (tasks only) = <b>{totalOriginalEstimate}h</b></div>
-            <div>currentRemaining (all issues) = <b>{currentRemaining}h</b></div>
-            <div>totalSpent (all issues) = <b>{totalSpent}h</b></div>
+            <div>currentRemaining (Jira field) = <b>{currentRemaining}h</b></div>
+            <div>totalSpent (Jira field) = <b>{totalSpent}h</b></div>
+
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Remaining Calculation ──</div>
+            <div>Formula: Remain(day0) = totalOriginalEstimate = {totalOriginalEstimate}h</div>
+            <div>Formula: Remain(dayN) = Remain(dayN-1) - Logged(dayN) + Added(dayN) - Removed(dayN)</div>
+            <div>Source: Worklogs fetched via /rest/api/3/issue/KEY/worklog API</div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Scope Changes ──</div>
             <div>scopeAdded = +{scopeAddedTotal}h ({addedIssuesCount} tasks)</div>
@@ -535,7 +548,8 @@ const BurndownGadget = () => {
                   <th style={{ padding: '2px 4px', textAlign: 'left', border: '1px solid #C1C7D0' }}>Date</th>
                   <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Ideal</th>
                   <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Remain</th>
-                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Logged</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>DayLog</th>
+                  <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>CumLog</th>
                   <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Added</th>
                   <th style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Removed</th>
                 </tr>
@@ -546,6 +560,7 @@ const BurndownGadget = () => {
                     <td style={{ padding: '2px 4px', border: '1px solid #C1C7D0' }}>{dp.date}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>{dp.ideal}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>{dp.remaining ?? '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.dayLogged ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.timeLogged ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#FF991F' }}>{dp.added || '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#DE350B' }}>{dp.removed || '-'}</td>
