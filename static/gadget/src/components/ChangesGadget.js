@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke, router } from '@forge/bridge';
 import GadgetWrapper from './GadgetWrapper';
 
-const JIRA_BASE_URL = 'https://jeisysvn.atlassian.net/browse/';
+
 
 const ChangesGadget = () => {
   const [data, setData] = useState(null);
@@ -170,10 +170,10 @@ const ChangesGadget = () => {
                 <tr key={`${item.key}-${index}`}>
                   <td>
                     <a
-                      href={`${JIRA_BASE_URL}${item.key}`}
+                      href={`/browse/${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`${JIRA_BASE_URL}${item.key}`, '_blank'); }}
+                      onClick={(e) => { e.preventDefault(); router.open(`/browse/${item.key}`); }}
                       className="issue-key"
                       style={{ cursor: 'pointer' }}
                     >

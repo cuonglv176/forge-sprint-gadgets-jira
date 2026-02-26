@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke, router } from '@forge/bridge';
 import GadgetWrapper from './GadgetWrapper';
 
 const RiskGadget = () => {
@@ -149,10 +149,10 @@ const RiskGadget = () => {
                 <tr key={item.key}>
                   <td>
                     <a
-                      href={`https://jeisysvn.atlassian.net/browse/${item.key}`}
+                      href={`/browse/${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`https://jeisysvn.atlassian.net/browse/${item.key}`, '_blank'); }}
+                      onClick={(e) => { e.preventDefault(); router.open(`/browse/${item.key}`); }}
                       className="issue-key"
                       style={{ cursor: 'pointer' }}
                     >

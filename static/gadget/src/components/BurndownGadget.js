@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke, router } from '@forge/bridge';
 import GadgetWrapper from './GadgetWrapper';
 import {
   ComposedChart,
@@ -252,7 +252,7 @@ const BurndownGadget = () => {
     : maxCapacity;
 
   // Jira base URL for clickable issue keys
-  const jiraBaseUrl = 'https://jeisysvn.atlassian.net/browse/';
+
 
   return (
     <GadgetWrapper
@@ -654,10 +654,10 @@ const BurndownGadget = () => {
                         <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#F4F5F7' }}>
                           <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0' }}>
                             <a
-                              href={`${jiraBaseUrl}${issue.key}`}
+                              href={`/browse/${issue.key}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`${jiraBaseUrl}${issue.key}`, '_blank'); }}
+                              onClick={(e) => { e.preventDefault(); router.open(`/browse/${issue.key}`); }}
                               style={{ color: '#0065FF', textDecoration: 'none', fontWeight: '600', cursor: 'pointer' }}
                             >
                               {issue.key}

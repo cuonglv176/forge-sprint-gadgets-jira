@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke, router } from '@forge/bridge';
 import GadgetWrapper from './GadgetWrapper';
 
 const PriorityGadget = () => {
@@ -165,7 +165,7 @@ const PriorityGadget = () => {
   };
 
   // Jira base URL
-  const jiraBaseUrl = 'https://jeisysvn.atlassian.net/browse/';
+
 
   if (!config.boardId && !loading) {
     return (
@@ -383,10 +383,10 @@ const PriorityGadget = () => {
                 <tr key={item.key}>
                   <td>
                     <a
-                      href={`${jiraBaseUrl}${item.key}`}
+                      href={`/browse/${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`${jiraBaseUrl}${item.key}`, '_blank'); }}
+                      onClick={(e) => { e.preventDefault(); router.open(`/browse/${item.key}`); }}
                       className="issue-key"
                       style={{ cursor: 'pointer' }}
                     >

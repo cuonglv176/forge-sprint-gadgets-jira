@@ -58,13 +58,12 @@ const sortByStatus = (items, statusField = 'status') => {
   });
 };
 
-// ============ SUBTASK REMAINING LOGIC ============
-// For a task with subtasks: use sum of subtask remaining only
-// For a task without subtasks: use its own remaining
-const computeEffectiveRemaining = (issues) => {
-  // Build a map: parentKey -> [subtask issues]
+// ============ SUBTASK LOGIC ============
+// Build subtask relationship map from issues list
+const buildSubtaskMap = (issues) => {
   const subtasksByParent = {};
   const subtaskKeys = new Set();
+  const parentKeys = new Set();
 
   issues.forEach(issue => {
     const isSubtask = issue.fields.issuetype?.subtask === true
@@ -76,23 +75,28 @@ const computeEffectiveRemaining = (issues) => {
       if (!subtasksByParent[parentKey]) subtasksByParent[parentKey] = [];
       subtasksByParent[parentKey].push(issue);
       subtaskKeys.add(issue.key);
+      parentKeys.add(parentKey);
     }
   });
 
-  // For each issue, compute effective remaining
+  return { subtasksByParent, subtaskKeys, parentKeys };
+};
+
+// For a task with subtasks in sprint: use sum of subtask values only (skip parent's own value)
+// For a task without subtasks: use its own value
+const computeEffectiveRemaining = (issues) => {
+  const { subtasksByParent, subtaskKeys } = buildSubtaskMap(issues);
+
   let totalRemaining = 0;
   issues.forEach(issue => {
-    // Skip subtasks themselves - they are counted via parent
-    if (subtaskKeys.has(issue.key)) return;
+    if (subtaskKeys.has(issue.key)) return; // Skip subtasks - counted via parent
 
     if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
-      // Has subtasks: sum subtask remaining only
       const subtaskRemaining = subtasksByParent[issue.key].reduce((sum, sub) =>
         sum + secondsToHours(sub.fields.timeestimate), 0
       );
       totalRemaining += subtaskRemaining;
     } else {
-      // No subtasks: use own remaining
       totalRemaining += secondsToHours(issue.fields.timeestimate);
     }
   });
@@ -100,23 +104,8 @@ const computeEffectiveRemaining = (issues) => {
   return totalRemaining;
 };
 
-// Compute effective original estimate (same logic as remaining)
 const computeEffectiveOriginalEstimate = (issues) => {
-  const subtasksByParent = {};
-  const subtaskKeys = new Set();
-
-  issues.forEach(issue => {
-    const isSubtask = issue.fields.issuetype?.subtask === true
-      || (issue.fields.issuetype?.name || '').toLowerCase().includes('sub-task')
-      || (issue.fields.issuetype?.name || '').toLowerCase().includes('subtask');
-
-    if (isSubtask && issue.fields.parent?.key) {
-      const parentKey = issue.fields.parent.key;
-      if (!subtasksByParent[parentKey]) subtasksByParent[parentKey] = [];
-      subtasksByParent[parentKey].push(issue);
-      subtaskKeys.add(issue.key);
-    }
-  });
+  const { subtasksByParent, subtaskKeys } = buildSubtaskMap(issues);
 
   let totalOE = 0;
   issues.forEach(issue => {
@@ -133,6 +122,27 @@ const computeEffectiveOriginalEstimate = (issues) => {
   });
 
   return totalOE;
+};
+
+// FIX: Also compute effective timeSpent to avoid duplicate counting
+const computeEffectiveSpent = (issues) => {
+  const { subtasksByParent, subtaskKeys } = buildSubtaskMap(issues);
+
+  let totalSpent = 0;
+  issues.forEach(issue => {
+    if (subtaskKeys.has(issue.key)) return; // Skip subtasks - counted via parent
+
+    if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
+      const subtaskSpent = subtasksByParent[issue.key].reduce((sum, sub) =>
+        sum + secondsToHours(sub.fields.timespent), 0
+      );
+      totalSpent += subtaskSpent;
+    } else {
+      totalSpent += secondsToHours(issue.fields.timespent);
+    }
+  });
+
+  return totalSpent;
 };
 
 // ============ JIRA API CALLS ============
@@ -194,46 +204,89 @@ const getSprintIssues = async (sprintId) => {
   return allIssues;
 };
 
-// Query issues that were previously in a sprint but removed
-// Uses JQL: sprint was sprintId (includes removed issues)
+// FIX: Query removed issues using Agile API as fallback, and also try GET endpoint for JQL "was"
 const getRemovedFromSprintIssues = async (sprintId) => {
   try {
-    const jql = `sprint was ${sprintId} AND NOT sprint = ${sprintId}`;
-    let allIssues = [];
-    let nextPageToken = null;
-
-    do {
-      const requestBody = {
-        jql: jql,
-        fields: [
-          'summary', 'status', 'priority', 'assignee', 'issuetype',
-          'timeoriginalestimate', 'timeestimate', 'timespent',
-          'created', 'updated', 'parent', 'subtasks'
-        ],
-        maxResults: 100
-      };
-
-      if (nextPageToken) {
-        requestBody.nextPageToken = nextPageToken;
+    // Method 1: Try JQL "sprint was X AND NOT sprint = X" via GET endpoint
+    const jqlStr = `sprint was ${sprintId} AND sprint != ${sprintId}`;
+    const response = await api.asUser().requestJira(
+      route`/rest/api/3/search?jql=${jqlStr}&fields=summary,status,priority,assignee,issuetype,timeoriginalestimate,timeestimate,timespent,created,updated,parent,subtasks&maxResults=100`,
+      {
+        headers: { 'Accept': 'application/json' }
       }
+    );
 
-      const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) return [];
+    if (response.ok) {
       const data = await response.json();
-      allIssues = allIssues.concat(data.issues || []);
-      nextPageToken = data.nextPageToken || null;
-    } while (nextPageToken);
+      const issues = data.issues || [];
+      if (issues.length > 0) {
+        console.log(`[getRemovedFromSprintIssues] Found ${issues.length} removed issues via JQL GET`);
+        return issues;
+      }
+    } else {
+      console.log(`[getRemovedFromSprintIssues] JQL GET failed: ${response.status}`);
+    }
 
-    return allIssues;
+    // Method 2: Fallback - try POST endpoint
+    const requestBody = {
+      jql: `sprint was ${sprintId} AND NOT sprint = ${sprintId}`,
+      fields: [
+        'summary', 'status', 'priority', 'assignee', 'issuetype',
+        'timeoriginalestimate', 'timeestimate', 'timespent',
+        'created', 'updated', 'parent', 'subtasks'
+      ],
+      maxResults: 100
+    };
+
+    const response2 = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (response2.ok) {
+      const data2 = await response2.json();
+      const issues2 = data2.issues || [];
+      console.log(`[getRemovedFromSprintIssues] Found ${issues2.length} removed issues via JQL POST`);
+      return issues2;
+    } else {
+      console.log(`[getRemovedFromSprintIssues] JQL POST also failed: ${response2.status}`);
+    }
+
+    // Method 3: Fallback - use Agile API to get all sprint issues (includes completed/removed)
+    try {
+      let allSprintIssues = [];
+      let startAt = 0;
+      do {
+        const agileResponse = await api.asUser().requestJira(
+          route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=100&fields=summary,status,priority,assignee,issuetype,timeoriginalestimate,timeestimate,timespent,created,updated,parent,subtasks`,
+          { headers: { 'Accept': 'application/json' } }
+        );
+        if (!agileResponse.ok) break;
+        const agileData = await agileResponse.json();
+        allSprintIssues = allSprintIssues.concat(agileData.issues || []);
+        if (allSprintIssues.length >= (agileData.total || 0)) break;
+        startAt += 100;
+      } while (true);
+
+      // Get current sprint issues
+      const currentIssues = await getSprintIssues(sprintId);
+      const currentKeys = new Set(currentIssues.map(i => i.key));
+
+      // Removed = in agile API but not in current sprint JQL
+      const removed = allSprintIssues.filter(i => !currentKeys.has(i.key));
+      console.log(`[getRemovedFromSprintIssues] Found ${removed.length} removed issues via Agile API diff`);
+      return removed;
+    } catch (agileErr) {
+      console.log(`[getRemovedFromSprintIssues] Agile API fallback failed: ${agileErr.message}`);
+    }
+
+    return [];
   } catch (e) {
+    console.log(`[getRemovedFromSprintIssues] Error: ${e.message}`);
     return [];
   }
 };
@@ -295,7 +348,6 @@ const analyzeSprintChangelog = (histories, sprintName, sprintId) => {
   return { addedDate, removedDate };
 };
 
-// FIX: Increased batch size and added error resilience for performance
 const getAllChangelogs = async (issues) => {
   const BATCH_SIZE = 5;
   const results = {};
@@ -339,7 +391,6 @@ const getIssueWorklogs = async (issueKey) => {
   }
 };
 
-// FIX: Reduced batch size for worklogs to avoid Forge timeout
 const getAllWorklogs = async (issues) => {
   const BATCH_SIZE = 5;
   const allWorklogs = [];
@@ -413,7 +464,9 @@ const saveSprintBaseline = async (sprintId, issues) => {
       timeSpent: secondsToHours(i.fields.timespent),
       assignee: i.fields.assignee?.displayName || null,
       status: i.fields.status?.name || 'To Do',
-      issueType: i.fields.issuetype?.name || 'Task'
+      issueType: i.fields.issuetype?.name || 'Task',
+      isSubtask: i.fields.issuetype?.subtask === true || (i.fields.issuetype?.name || '').toLowerCase().includes('sub-task') || (i.fields.issuetype?.name || '').toLowerCase().includes('subtask'),
+      parentKey: i.fields.parent?.key || null
     }))
   };
   await storage.set(`baseline-${sprintId}`, baseline);
@@ -488,13 +541,11 @@ resolver.define('getBurndownData', async ({ payload }) => {
       sum + (item.originalEstimate || 0), 0
     ) || computeEffectiveOriginalEstimate(issues);
 
-    // Current remaining using subtask logic
+    // FIX: Current remaining and spent using subtask-aware logic to avoid duplicate
     const currentRemaining = computeEffectiveRemaining(issues);
-    const totalSpent = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timespent), 0);
+    const totalSpent = computeEffectiveSpent(issues);
 
     // ============ CHANGELOG-BASED SCOPE CHANGES ============
-    // FIX: Only fetch changelogs for issues that were created after sprint start
-    // to reduce unnecessary API calls
     const sprintStartDate = new Date(sprint.startDate);
     sprintStartDate.setHours(0, 0, 0, 0);
 
@@ -502,8 +553,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const issuesNeedingChangelog = issues.filter(issue => {
       const createdDate = new Date(issue.fields.created);
       createdDate.setHours(0, 0, 0, 0);
-      // Only need changelog if issue was created near or after sprint start
-      // OR if we can't determine from creation date alone
       return createdDate >= sprintStartDate;
     });
 
@@ -550,8 +599,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
       }
     });
 
-    // ============ REMOVED ISSUES via JQL ============
-    // Query issues that were in this sprint but removed using "sprint was X AND NOT sprint = X"
+    // ============ REMOVED ISSUES ============
     const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id);
     const removedIssues = [];
 
@@ -660,18 +708,53 @@ resolver.define('getBurndownData', async ({ payload }) => {
       current.setDate(current.getDate() + 1);
     }
 
-    // Issue details for debug panel
-    const issueDetails = issues.map(i => ({
-      key: i.key,
-      summary: i.fields.summary,
-      assignee: i.fields.assignee?.displayName || 'Unassigned',
-      status: i.fields.status?.name || 'To Do',
-      originalEstimate: secondsToHours(i.fields.timeoriginalestimate),
-      remainingEstimate: secondsToHours(i.fields.timeestimate),
-      timeSpent: secondsToHours(i.fields.timespent),
-      issueType: i.fields.issuetype?.name || 'Task'
-    }));
+    // FIX: Issue details with subtask-aware effective values
+    const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
+
+    const issueDetails = issues.map(i => {
+      const isSubtask = subtaskKeys.has(i.key);
+      const hasSubtasks = parentKeys.has(i.key) || (subtasksByParent[i.key] && subtasksByParent[i.key].length > 0);
+
+      let effectiveOE = secondsToHours(i.fields.timeoriginalestimate);
+      let effectiveRemaining = secondsToHours(i.fields.timeestimate);
+      let effectiveSpent = secondsToHours(i.fields.timespent);
+
+      // If this is a parent with subtasks in sprint, show subtask totals instead
+      if (hasSubtasks && subtasksByParent[i.key]) {
+        effectiveOE = subtasksByParent[i.key].reduce((sum, sub) =>
+          sum + secondsToHours(sub.fields.timeoriginalestimate), 0
+        );
+        effectiveRemaining = subtasksByParent[i.key].reduce((sum, sub) =>
+          sum + secondsToHours(sub.fields.timeestimate), 0
+        );
+        effectiveSpent = subtasksByParent[i.key].reduce((sum, sub) =>
+          sum + secondsToHours(sub.fields.timespent), 0
+        );
+      }
+
+      return {
+        key: i.key,
+        summary: i.fields.summary,
+        assignee: i.fields.assignee?.displayName || 'Unassigned',
+        status: i.fields.status?.name || 'To Do',
+        originalEstimate: effectiveOE,
+        remainingEstimate: effectiveRemaining,
+        timeSpent: effectiveSpent,
+        issueType: i.fields.issuetype?.name || 'Task',
+        isSubtask,
+        hasSubtasks,
+        parentKey: i.fields.parent?.key || null
+      };
+    });
     sortByStatus(issueDetails);
+
+    // FIX: Also return removed issue details for debug panel
+    const removedIssueDetails = removedIssues.map(ri => ({
+      key: ri.key,
+      summary: ri.summary,
+      removedDate: ri.removedDate,
+      originalEstimate: ri.originalEstimate
+    }));
 
     return {
       success: true,
@@ -692,11 +775,22 @@ resolver.define('getBurndownData', async ({ payload }) => {
         addedIssuesCount: addedIssues.length,
         removedIssuesCount: removedIssues.length,
         issueDetails,
+        removedIssueDetails,
+        addedIssues,
         baselineIssueCount: filteredBaseline?.issues?.length || 0,
-        jiraBaseUrl: JIRA_BASE_URL
+        jiraBaseUrl: JIRA_BASE_URL,
+        _debug: {
+          totalIssuesInSprint: allIssues.length,
+          removedFromSprintCount: removedFromSprintIssues.length,
+          removedIssueKeys: removedIssues.map(r => r.key),
+          addedIssueKeys: addedIssues.map(a => a.key),
+          subtaskCount: subtaskKeys.size,
+          parentWithSubtasksCount: parentKeys.size
+        }
       }
     };
   } catch (error) {
+    console.log(`[getBurndownData] Error: ${error.message}`);
     return { success: false, error: error.message };
   }
 });
@@ -821,14 +915,13 @@ resolver.define('getScopeChanges', async ({ payload }) => {
     const sprintStartDate = new Date(sprint.startDate);
     sprintStartDate.setHours(0, 0, 0, 0);
 
-    // FIX: Only fetch changelogs for issues that could have been added after sprint start
+    // Only fetch changelogs for issues that could have been added after sprint start
     const issuesNeedingChangelog = allIssues.filter(issue => {
       const createdDate = new Date(issue.fields.created);
       createdDate.setHours(0, 0, 0, 0);
       return createdDate >= sprintStartDate;
     });
 
-    // Fetch changelogs for current issues
     const allChangelogs = await getAllChangelogs(issuesNeedingChangelog);
 
     const added = [];
@@ -871,7 +964,7 @@ resolver.define('getScopeChanges', async ({ payload }) => {
       }
     });
 
-    // ============ REMOVED ISSUES via JQL ============
+    // ============ REMOVED ISSUES ============
     const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id);
     const removed = [];
 
