@@ -152,7 +152,9 @@ const RiskGadget = () => {
                       href={`https://jeisysvn.atlassian.net/browse/${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`https://jeisysvn.atlassian.net/browse/${item.key}`, '_blank'); }}
                       className="issue-key"
+                      style={{ cursor: 'pointer' }}
                     >
                       {item.key}
                     </a>

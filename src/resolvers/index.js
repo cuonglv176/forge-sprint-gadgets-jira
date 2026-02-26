@@ -47,7 +47,7 @@ const getStatusOrder = (statusName) => {
   for (const [key, order] of Object.entries(STATUS_ORDER)) {
     if (lower.includes(key)) return order;
   }
-  return 2; // default to "To Do" group
+  return 2;
 };
 
 const sortByStatus = (items, statusField = 'status') => {
@@ -56,6 +56,83 @@ const sortByStatus = (items, statusField = 'status') => {
     const orderB = getStatusOrder(b[statusField]);
     return orderA - orderB;
   });
+};
+
+// ============ SUBTASK REMAINING LOGIC ============
+// For a task with subtasks: use sum of subtask remaining only
+// For a task without subtasks: use its own remaining
+const computeEffectiveRemaining = (issues) => {
+  // Build a map: parentKey -> [subtask issues]
+  const subtasksByParent = {};
+  const subtaskKeys = new Set();
+
+  issues.forEach(issue => {
+    const isSubtask = issue.fields.issuetype?.subtask === true
+      || (issue.fields.issuetype?.name || '').toLowerCase().includes('sub-task')
+      || (issue.fields.issuetype?.name || '').toLowerCase().includes('subtask');
+
+    if (isSubtask && issue.fields.parent?.key) {
+      const parentKey = issue.fields.parent.key;
+      if (!subtasksByParent[parentKey]) subtasksByParent[parentKey] = [];
+      subtasksByParent[parentKey].push(issue);
+      subtaskKeys.add(issue.key);
+    }
+  });
+
+  // For each issue, compute effective remaining
+  let totalRemaining = 0;
+  issues.forEach(issue => {
+    // Skip subtasks themselves - they are counted via parent
+    if (subtaskKeys.has(issue.key)) return;
+
+    if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
+      // Has subtasks: sum subtask remaining only
+      const subtaskRemaining = subtasksByParent[issue.key].reduce((sum, sub) =>
+        sum + secondsToHours(sub.fields.timeestimate), 0
+      );
+      totalRemaining += subtaskRemaining;
+    } else {
+      // No subtasks: use own remaining
+      totalRemaining += secondsToHours(issue.fields.timeestimate);
+    }
+  });
+
+  return totalRemaining;
+};
+
+// Compute effective original estimate (same logic as remaining)
+const computeEffectiveOriginalEstimate = (issues) => {
+  const subtasksByParent = {};
+  const subtaskKeys = new Set();
+
+  issues.forEach(issue => {
+    const isSubtask = issue.fields.issuetype?.subtask === true
+      || (issue.fields.issuetype?.name || '').toLowerCase().includes('sub-task')
+      || (issue.fields.issuetype?.name || '').toLowerCase().includes('subtask');
+
+    if (isSubtask && issue.fields.parent?.key) {
+      const parentKey = issue.fields.parent.key;
+      if (!subtasksByParent[parentKey]) subtasksByParent[parentKey] = [];
+      subtasksByParent[parentKey].push(issue);
+      subtaskKeys.add(issue.key);
+    }
+  });
+
+  let totalOE = 0;
+  issues.forEach(issue => {
+    if (subtaskKeys.has(issue.key)) return;
+
+    if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
+      const subtaskOE = subtasksByParent[issue.key].reduce((sum, sub) =>
+        sum + secondsToHours(sub.fields.timeoriginalestimate), 0
+      );
+      totalOE += subtaskOE;
+    } else {
+      totalOE += secondsToHours(issue.fields.timeoriginalestimate);
+    }
+  });
+
+  return totalOE;
 };
 
 // ============ JIRA API CALLS ============
@@ -90,7 +167,7 @@ const getSprintIssues = async (sprintId) => {
       fields: [
         'summary', 'status', 'priority', 'assignee', 'issuetype',
         'timeoriginalestimate', 'timeestimate', 'timespent',
-        'duedate', 'created', 'updated', 'fixVersions'
+        'duedate', 'created', 'updated', 'fixVersions', 'parent', 'subtasks'
       ],
       maxResults: 100
     };
@@ -117,8 +194,51 @@ const getSprintIssues = async (sprintId) => {
   return allIssues;
 };
 
+// Query issues that were previously in a sprint but removed
+// Uses JQL: sprint was sprintId (includes removed issues)
+const getRemovedFromSprintIssues = async (sprintId) => {
+  try {
+    const jql = `sprint was ${sprintId} AND NOT sprint = ${sprintId}`;
+    let allIssues = [];
+    let nextPageToken = null;
+
+    do {
+      const requestBody = {
+        jql: jql,
+        fields: [
+          'summary', 'status', 'priority', 'assignee', 'issuetype',
+          'timeoriginalestimate', 'timeestimate', 'timespent',
+          'created', 'updated', 'parent', 'subtasks'
+        ],
+        maxResults: 100
+      };
+
+      if (nextPageToken) {
+        requestBody.nextPageToken = nextPageToken;
+      }
+
+      const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) return [];
+      const data = await response.json();
+      allIssues = allIssues.concat(data.issues || []);
+      nextPageToken = data.nextPageToken || null;
+    } while (nextPageToken);
+
+    return allIssues;
+  } catch (e) {
+    return [];
+  }
+};
+
 // ============ CHANGELOG API ============
-// Get changelog for a single issue to find Sprint field changes
 const getIssueChangelog = async (issueKey) => {
   try {
     let allHistories = [];
@@ -143,15 +263,12 @@ const getIssueChangelog = async (issueKey) => {
   }
 };
 
-// Analyze sprint changelog for a single issue
-// Returns: { addedToSprint: Date|null, removedFromSprint: Date|null }
 const analyzeSprintChangelog = (histories, sprintName, sprintId) => {
   let addedDate = null;
   let removedDate = null;
-  
-  // Sort histories by date ascending
+
   const sorted = [...histories].sort((a, b) => new Date(a.created) - new Date(b.created));
-  
+
   for (const history of sorted) {
     for (const item of (history.items || [])) {
       if (item.field === 'Sprint') {
@@ -159,28 +276,25 @@ const analyzeSprintChangelog = (histories, sprintName, sprintId) => {
         const toStr = item.toString || '';
         const fromId = item.from || '';
         const toId = item.to || '';
-        
-        // Check if sprint was ADDED (not in "from", but in "to")
+
         const wasInFrom = fromStr.includes(sprintName) || fromId.includes(String(sprintId));
         const isInTo = toStr.includes(sprintName) || toId.includes(String(sprintId));
-        
+
         if (!wasInFrom && isInTo) {
           addedDate = new Date(history.created);
         }
-        
-        // Check if sprint was REMOVED (in "from", but not in "to")
+
         if (wasInFrom && !isInTo) {
           removedDate = new Date(history.created);
-          addedDate = null; // Reset added since it was removed
+          addedDate = null;
         }
       }
     }
   }
-  
+
   return { addedDate, removedDate };
 };
 
-// Get all changelogs for multiple issues (batched)
 const getAllChangelogs = async (issues) => {
   const BATCH_SIZE = 10;
   const results = {};
@@ -279,7 +393,6 @@ const getSprintBaseline = async (sprintId) => {
 };
 
 const saveSprintBaseline = async (sprintId, issues) => {
-  // Filter out Done/Closed/Resolved issues - they may be done from previous sprint
   const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
   const activeIssues = issues.filter(i => {
     const status = (i.fields.status?.name || '').toLowerCase();
@@ -319,45 +432,42 @@ resolver.define('getBurndownData', async ({ payload }) => {
   try {
     const { boardId, assignee, teamSize: configTeamSize } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     let allIssues = await getSprintIssues(sprint.id);
-    
+
     // Get or create baseline
     let baseline = await getSprintBaseline(sprint.id);
-    
-    // Auto-detect corrupted baseline: if baseline has much fewer issues than current non-done issues
+
+    // Auto-detect corrupted baseline
     if (baseline) {
       const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
       const currentActiveCount = allIssues.filter(i => {
         const status = (i.fields.status?.name || '').toLowerCase();
         return !doneStatuses.some(s => status.includes(s));
       }).length;
-      
+
       if (baseline.issues.length < currentActiveCount * 0.3 && baseline.issues.length < 10) {
-        console.log(`Baseline corrupted: ${baseline.issues.length} vs ${currentActiveCount} active issues. Recreating...`);
         await deleteSprintBaseline(sprint.id);
         baseline = null;
       }
     }
-    
+
     if (!baseline) {
       baseline = await saveSprintBaseline(sprint.id, allIssues);
     }
-    
+
     const allAssignees = [...new Set(allIssues.map(i => i.fields.assignee?.displayName).filter(Boolean))];
-    
-    // Filter by assignee if specified
+
     let issues = allIssues;
     let teamSize = configTeamSize || allAssignees.length || 1;
     let filteredBaseline = baseline;
-    
+
     if (assignee && assignee !== 'All') {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
       teamSize = 1;
-      
       if (filteredBaseline?.issues) {
         filteredBaseline = {
           ...baseline,
@@ -365,138 +475,113 @@ resolver.define('getBurndownData', async ({ payload }) => {
         };
       }
     }
-    
+
     const startDate = new Date(sprint.startDate);
     const endDate = new Date(sprint.endDate);
     const workingDays = countWorkingDays(startDate, endDate);
-    
-    // Max Capacity = workingDays × 8h × teamSize
     const maxCapacity = workingDays * HOURS_PER_DAY * teamSize;
-    
-    // Original Estimate from baseline (non-Done issues at sprint start)
-    const totalOriginalEstimate = filteredBaseline?.issues?.reduce((sum, item) => 
+
+    // Original Estimate from baseline using subtask logic
+    const totalOriginalEstimate = filteredBaseline?.issues?.reduce((sum, item) =>
       sum + (item.originalEstimate || 0), 0
-    ) || issues.reduce((sum, issue) => 
-      sum + secondsToHours(issue.fields.timeoriginalestimate), 0
-    );
-    
-    // Current metrics from ALL issues (including Done)
-    const currentRemaining = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timeestimate), 0);
+    ) || computeEffectiveOriginalEstimate(issues);
+
+    // Current remaining using subtask logic
+    const currentRemaining = computeEffectiveRemaining(issues);
     const totalSpent = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timespent), 0);
-    
+
     // ============ CHANGELOG-BASED SCOPE CHANGES ============
-    // Fetch changelogs for all issues to detect sprint add/remove dates
     const allChangelogs = await getAllChangelogs(issues);
-    
+
     const sprintStartDate = new Date(sprint.startDate);
     sprintStartDate.setHours(0, 0, 0, 0);
-    
+
     const addedIssues = [];
-    const removedIssues = [];
     const scopeChangesByDate = {};
-    
+
     issues.forEach(issue => {
       const histories = allChangelogs[issue.key] || [];
       const { addedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
-      
-      // Determine when this issue was added to the sprint
+
       let issueAddedDate = null;
-      
+
       if (addedDate) {
-        // Has explicit sprint changelog - use that date
         const addedDay = new Date(addedDate);
         addedDay.setHours(0, 0, 0, 0);
-        
         if (addedDay > sprintStartDate) {
           issueAddedDate = addedDay;
         }
       } else {
-        // No sprint changelog - check if created after sprint start
         const createdDate = new Date(issue.fields.created);
         createdDate.setHours(0, 0, 0, 0);
-        
         if (createdDate > sprintStartDate) {
           issueAddedDate = createdDate;
         }
       }
-      
+
       if (issueAddedDate) {
         const dateStr = issueAddedDate.toISOString().split('T')[0];
         const oe = secondsToHours(issue.fields.timeoriginalestimate);
-        
+
         addedIssues.push({
           key: issue.key,
           summary: issue.fields.summary,
           addedDate: dateStr,
           originalEstimate: oe
         });
-        
+
         if (!scopeChangesByDate[dateStr]) {
           scopeChangesByDate[dateStr] = { added: 0, removed: 0 };
         }
         scopeChangesByDate[dateStr].added += oe;
       }
     });
-    
-    // Check baseline for removed issues (in baseline but no longer in sprint)
-    const currentKeys = new Set(issues.map(i => i.key));
-    const baselineRemovedIssues = filteredBaseline?.issues?.filter(b => !currentKeys.has(b.key)) || [];
-    
-    if (baselineRemovedIssues.length > 0) {
-      // For removed issues, we need to check when they were removed
-      // Since they're not in current sprint, we fetch their changelogs separately
-      for (const removedItem of baselineRemovedIssues) {
-        try {
-          const histories = await getIssueChangelog(removedItem.key);
-          const { removedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
-          
-          let removeDateStr;
-          if (removedDate) {
-            removeDateStr = removedDate.toISOString().split('T')[0];
-          } else {
-            // Fallback: use today or sprint end
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            removeDateStr = today <= endDate 
-              ? today.toISOString().split('T')[0]
-              : endDate.toISOString().split('T')[0];
-          }
-          
-          removedIssues.push({
-            key: removedItem.key,
-            summary: removedItem.summary,
-            removedDate: removeDateStr,
-            originalEstimate: removedItem.originalEstimate || 0
-          });
-          
-          if (!scopeChangesByDate[removeDateStr]) {
-            scopeChangesByDate[removeDateStr] = { added: 0, removed: 0 };
-          }
-          scopeChangesByDate[removeDateStr].removed += (removedItem.originalEstimate || 0);
-        } catch (e) {
-          // Fallback for removed issues we can't fetch changelog for
+
+    // ============ REMOVED ISSUES via JQL ============
+    // Query issues that were in this sprint but removed using "sprint was X AND NOT sprint = X"
+    const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id);
+    const removedIssues = [];
+
+    if (removedFromSprintIssues.length > 0) {
+      const removedChangelogs = await getAllChangelogs(removedFromSprintIssues);
+
+      for (const removedIssue of removedFromSprintIssues) {
+        const histories = removedChangelogs[removedIssue.key] || [];
+        const { removedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
+
+        let removeDateStr;
+        if (removedDate) {
+          removeDateStr = removedDate.toISOString().split('T')[0];
+        } else {
           const today = new Date();
-          const removeDateStr = today.toISOString().split('T')[0];
-          if (!scopeChangesByDate[removeDateStr]) {
-            scopeChangesByDate[removeDateStr] = { added: 0, removed: 0 };
-          }
-          scopeChangesByDate[removeDateStr].removed += (removedItem.originalEstimate || 0);
-          removedIssues.push({
-            key: removedItem.key,
-            summary: removedItem.summary,
-            removedDate: removeDateStr,
-            originalEstimate: removedItem.originalEstimate || 0
-          });
+          today.setHours(0, 0, 0, 0);
+          removeDateStr = today <= endDate
+            ? today.toISOString().split('T')[0]
+            : endDate.toISOString().split('T')[0];
         }
+
+        const oe = secondsToHours(removedIssue.fields.timeoriginalestimate);
+
+        removedIssues.push({
+          key: removedIssue.key,
+          summary: removedIssue.fields.summary,
+          removedDate: removeDateStr,
+          originalEstimate: oe
+        });
+
+        if (!scopeChangesByDate[removeDateStr]) {
+          scopeChangesByDate[removeDateStr] = { added: 0, removed: 0 };
+        }
+        scopeChangesByDate[removeDateStr].removed += oe;
       }
     }
-    
+
     const scopeAddedTotal = addedIssues.reduce((sum, i) => sum + (i.originalEstimate || 0), 0);
     const scopeRemovedTotal = removedIssues.reduce((sum, i) => sum + (i.originalEstimate || 0), 0);
-    
+
     // ============ WORKLOG-BASED REMAINING ============
     const allWorklogs = await getAllWorklogs(issues);
-    
+
     const worklogByDate = {};
     allWorklogs.forEach(wl => {
       const dateStr = wl.started ? wl.started.split('T')[0] : null;
@@ -505,7 +590,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
         worklogByDate[dateStr] += secondsToHours(wl.timeSpentSeconds || 0);
       }
     });
-    
+
     // Generate data points
     const dataPoints = [];
     const current = new Date(startDate);
@@ -513,11 +598,10 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const dailyDecrease = maxCapacity / workingDays;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     let runningRemaining = totalOriginalEstimate;
     let cumulativeLogged = 0;
-    
-    // Start Sprint data point
+
     dataPoints.push({
       date: 'start',
       displayDate: 'Start Sprint',
@@ -529,26 +613,26 @@ resolver.define('getBurndownData', async ({ payload }) => {
       added: 0,
       removed: 0
     });
-    
+
     while (current <= endDate) {
       if (isWorkingDay(current) && current > startDate) {
         workingDayCount++;
       }
-      
+
       const ideal = Math.max(0, maxCapacity - (dailyDecrease * workingDayCount));
       const dateStr = current.toISOString().split('T')[0];
       const currentDate = new Date(current);
       currentDate.setHours(0, 0, 0, 0);
       const isPastOrToday = currentDate <= today;
-      
+
       const scopeChange = scopeChangesByDate[dateStr] || { added: 0, removed: 0 };
       const dayLogged = worklogByDate[dateStr] || 0;
-      
+
       if (isPastOrToday) {
         cumulativeLogged += dayLogged;
         runningRemaining = runningRemaining - dayLogged + scopeChange.added - scopeChange.removed;
       }
-      
+
       dataPoints.push({
         date: dateStr,
         displayDate: formatDate(dateStr),
@@ -562,7 +646,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
       });
       current.setDate(current.getDate() + 1);
     }
-    
+
     // Issue details for debug panel
     const issueDetails = issues.map(i => ({
       key: i.key,
@@ -575,7 +659,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
       issueType: i.fields.issuetype?.name || 'Task'
     }));
     sortByStatus(issueDetails);
-    
+
     return {
       success: true,
       data: {
@@ -609,12 +693,12 @@ resolver.define('deleteBaseline', async ({ payload }) => {
   try {
     const { boardId } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     await deleteSprintBaseline(sprint.id);
-    return { success: true, message: `Baseline for sprint ${sprint.name} deleted. It will be recreated on next load.` };
+    return { success: true, message: `Baseline for sprint ${sprint.name} deleted.` };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -625,15 +709,15 @@ resolver.define('getSprintHealth', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     let issues = await getSprintIssues(sprint.id);
     if (assignee && assignee !== 'All') {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
-    
+
     let underCount = 0, normalCount = 0, goodCount = 0;
     issues.forEach(issue => {
       const original = secondsToHours(issue.fields.timeoriginalestimate);
@@ -644,7 +728,7 @@ resolver.define('getSprintHealth', async ({ payload }) => {
       else if (original > actualTotal) goodCount++;
       else normalCount++;
     });
-    
+
     return {
       success: true,
       data: { counts: { under: underCount, normal: normalCount, good: goodCount, total: issues.length }, sprintName: sprint.name }
@@ -659,35 +743,35 @@ resolver.define('getAtRiskItems', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     let issues = await getSprintIssues(sprint.id);
     if (assignee && assignee !== 'All') {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
-    
+
     const atRiskItems = [];
     const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
     const now = new Date();
     now.setHours(0, 0, 0, 0);
-    
+
     issues.forEach(issue => {
       const status = issue.fields.status?.name?.toLowerCase() || '';
       if (doneStatuses.some(s => status.includes(s))) return;
-      
+
       let riskReason = null;
       const remaining = secondsToHours(issue.fields.timeestimate);
       const original = secondsToHours(issue.fields.timeoriginalestimate);
       const dueDate = issue.fields.duedate ? new Date(issue.fields.duedate) : null;
-      
+
       if (remaining === 0 && original > 0) riskReason = 'TIME_BOX_EXCEEDED';
       if (dueDate) {
         dueDate.setHours(0, 0, 0, 0);
         if (dueDate <= now) riskReason = 'DEADLINE_EXCEEDED';
       }
-      
+
       if (riskReason) {
         atRiskItems.push({
           key: issue.key, summary: issue.fields.summary,
@@ -698,9 +782,9 @@ resolver.define('getAtRiskItems', async ({ payload }) => {
         });
       }
     });
-    
+
     sortByStatus(atRiskItems);
-    
+
     return { success: true, data: { items: atRiskItems, total: atRiskItems.length, sprintName: sprint.name } };
   } catch (error) {
     return { success: false, error: error.message };
@@ -712,49 +796,46 @@ resolver.define('getScopeChanges', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     let allIssues = await getSprintIssues(sprint.id);
     if (assignee && assignee !== 'All') {
       allIssues = allIssues.filter(i => i.fields.assignee?.displayName === assignee);
     }
-    
+
     const sprintStartDate = new Date(sprint.startDate);
     sprintStartDate.setHours(0, 0, 0, 0);
-    
-    // Fetch changelogs for all current issues
+
+    // Fetch changelogs for current issues
     const allChangelogs = await getAllChangelogs(allIssues);
-    
+
     const added = [];
-    
+
     allIssues.forEach(issue => {
       const histories = allChangelogs[issue.key] || [];
       const { addedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
-      
+
       let issueAddedDate = null;
       let changeSource = '';
-      
+
       if (addedDate) {
         const addedDay = new Date(addedDate);
         addedDay.setHours(0, 0, 0, 0);
-        
         if (addedDay > sprintStartDate) {
           issueAddedDate = addedDay;
           changeSource = 'sprint_changelog';
         }
       } else {
-        // No sprint changelog - check if created after sprint start
         const createdDate = new Date(issue.fields.created);
         createdDate.setHours(0, 0, 0, 0);
-        
         if (createdDate > sprintStartDate) {
           issueAddedDate = createdDate;
           changeSource = 'created_after_start';
         }
       }
-      
+
       if (issueAddedDate) {
         added.push({
           key: issue.key,
@@ -769,48 +850,34 @@ resolver.define('getScopeChanges', async ({ payload }) => {
         });
       }
     });
-    
-    // Detect removed issues using baseline
-    const baseline = await getSprintBaseline(sprint.id);
-    const currentKeys = new Set(allIssues.map(i => i.key));
-    const baselineRemovedIssues = (baseline?.issues || []).filter(b => !currentKeys.has(b.key));
-    
+
+    // ============ REMOVED ISSUES via JQL ============
+    const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id);
     const removed = [];
-    
-    for (const removedItem of baselineRemovedIssues) {
-      try {
-        const histories = await getIssueChangelog(removedItem.key);
+
+    if (removedFromSprintIssues.length > 0) {
+      const removedChangelogs = await getAllChangelogs(removedFromSprintIssues);
+
+      for (const removedIssue of removedFromSprintIssues) {
+        const histories = removedChangelogs[removedIssue.key] || [];
         const { removedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
-        
+
         removed.push({
-          key: removedItem.key,
-          summary: removedItem.summary || removedItem.key,
-          assignee: removedItem.assignee || 'Unassigned',
-          priority: null,
-          status: 'Removed',
+          key: removedIssue.key,
+          summary: removedIssue.fields.summary,
+          assignee: removedIssue.fields.assignee?.displayName || 'Unassigned',
+          priority: removedIssue.fields.priority?.name,
+          status: removedIssue.fields.status?.name || 'Removed from sprint',
           changeType: 'REMOVED',
           changeDate: removedDate ? removedDate.toISOString() : new Date().toISOString(),
-          changeSource: removedDate ? 'sprint_changelog' : 'baseline_diff',
-          originalEstimate: removedItem.originalEstimate || 0
-        });
-      } catch (e) {
-        removed.push({
-          key: removedItem.key,
-          summary: removedItem.summary || removedItem.key,
-          assignee: removedItem.assignee || 'Unassigned',
-          priority: null,
-          status: 'Removed',
-          changeType: 'REMOVED',
-          changeDate: new Date().toISOString(),
-          changeSource: 'baseline_diff',
-          originalEstimate: removedItem.originalEstimate || 0
+          changeSource: removedDate ? 'sprint_changelog' : 'jql_was_sprint',
+          originalEstimate: secondsToHours(removedIssue.fields.timeoriginalestimate)
         });
       }
     }
-    
-    // Sort added by status
+
     sortByStatus(added);
-    
+
     return {
       success: true,
       data: {
@@ -834,17 +901,17 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
   try {
     const { boardId, assignee, expand } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     let issues = await getSprintIssues(sprint.id);
     if (assignee && assignee !== 'All') {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
-    
+
     const priorityOrder = { 'Highest': 1, 'High': 2, 'Medium': 3, 'Low': 4, 'Lowest': 5 };
-    
+
     const allItems = issues.map(issue => ({
       key: issue.key, summary: issue.fields.summary,
       assignee: issue.fields.assignee?.displayName || 'Unassigned',
@@ -855,8 +922,7 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
       remainingEstimate: secondsToHours(issue.fields.timeestimate),
       timeSpent: secondsToHours(issue.fields.timespent)
     }));
-    
-    // Sort by status first (In Progress -> To Do -> Done), then by priority
+
     allItems.sort((a, b) => {
       const statusA = getStatusOrder(a.status);
       const statusB = getStatusOrder(b.status);
@@ -865,9 +931,9 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
       const pB = priorityOrder[b.priority] || 3;
       return pA - pB;
     });
-    
+
     const displayItems = expand ? allItems : allItems.slice(0, 5);
-    
+
     return {
       success: true,
       data: {
@@ -891,18 +957,18 @@ resolver.define('getReleaseData', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
     if (!boardId) return { success: false, error: 'Board ID is required' };
-    
+
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
-    
+
     let issues = await getSprintIssues(sprint.id);
     if (assignee && assignee !== 'All') {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
-    
+
     const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
     const releaseMap = new Map();
-    
+
     issues.forEach(issue => {
       const versions = issue.fields.fixVersions || [];
       versions.forEach(version => {
@@ -933,7 +999,7 @@ resolver.define('getReleaseData', async ({ payload }) => {
         });
       });
     });
-    
+
     const releases = Array.from(releaseMap.values()).map(r => {
       sortByStatus(r.issues);
       return {
@@ -943,18 +1009,18 @@ resolver.define('getReleaseData', async ({ payload }) => {
         doneEstimate: Math.round(r.doneEstimate * 10) / 10
       };
     });
-    
+
     releases.sort((a, b) => {
       if (a.released !== b.released) return a.released ? 1 : -1;
       const dateA = a.releaseDate ? new Date(a.releaseDate) : new Date('9999-12-31');
       const dateB = b.releaseDate ? new Date(b.releaseDate) : new Date('9999-12-31');
       return dateA - dateB;
     });
-    
+
     const unversionedCount = issues.filter(
       issue => !issue.fields.fixVersions || issue.fields.fixVersions.length === 0
     ).length;
-    
+
     return {
       success: true,
       data: { releases, totalReleases: releases.length, unversionedCount, sprintName: sprint.name }

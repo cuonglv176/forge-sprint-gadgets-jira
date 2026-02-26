@@ -309,7 +309,9 @@ const ReleasesGadget = () => {
                                 href={`https://jeisysvn.atlassian.net/browse/${issue.key}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`https://jeisysvn.atlassian.net/browse/${issue.key}`, '_blank'); }}
                                 className="issue-key"
+                                style={{ cursor: 'pointer' }}
                               >
                                 {issue.key}
                               </a>

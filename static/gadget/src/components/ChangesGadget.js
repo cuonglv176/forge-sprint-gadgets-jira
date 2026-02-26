@@ -173,7 +173,9 @@ const ChangesGadget = () => {
                       href={`${JIRA_BASE_URL}${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`${JIRA_BASE_URL}${item.key}`, '_blank'); }}
                       className="issue-key"
+                      style={{ cursor: 'pointer' }}
                     >
                       {item.key}
                     </a>

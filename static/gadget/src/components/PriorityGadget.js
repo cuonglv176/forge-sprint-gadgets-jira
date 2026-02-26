@@ -386,7 +386,9 @@ const PriorityGadget = () => {
                       href={`${jiraBaseUrl}${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`${jiraBaseUrl}${item.key}`, '_blank'); }}
                       className="issue-key"
+                      style={{ cursor: 'pointer' }}
                     >
                       {item.key}
                     </a>

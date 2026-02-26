@@ -600,7 +600,8 @@ const BurndownGadget = () => {
                               href={`${jiraBaseUrl}${issue.key}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              style={{ color: '#0065FF', textDecoration: 'none', fontWeight: '600' }}
+                              onClick={(e) => { e.preventDefault(); (window.top || window.parent || window).open(`${jiraBaseUrl}${issue.key}`, '_blank'); }}
+                              style={{ color: '#0065FF', textDecoration: 'none', fontWeight: '600', cursor: 'pointer' }}
                             >
                               {issue.key}
                             </a>
