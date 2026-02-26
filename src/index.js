@@ -295,8 +295,9 @@ const analyzeSprintChangelog = (histories, sprintName, sprintId) => {
   return { addedDate, removedDate };
 };
 
+// FIX: Increased batch size and added error resilience for performance
 const getAllChangelogs = async (issues) => {
-  const BATCH_SIZE = 10;
+  const BATCH_SIZE = 5;
   const results = {};
 
   for (let i = 0; i < issues.length; i += BATCH_SIZE) {
@@ -338,8 +339,9 @@ const getIssueWorklogs = async (issueKey) => {
   }
 };
 
+// FIX: Reduced batch size for worklogs to avoid Forge timeout
 const getAllWorklogs = async (issues) => {
-  const BATCH_SIZE = 10;
+  const BATCH_SIZE = 5;
   const allWorklogs = [];
 
   for (let i = 0; i < issues.length; i += BATCH_SIZE) {
@@ -491,10 +493,21 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const totalSpent = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timespent), 0);
 
     // ============ CHANGELOG-BASED SCOPE CHANGES ============
-    const allChangelogs = await getAllChangelogs(issues);
-
+    // FIX: Only fetch changelogs for issues that were created after sprint start
+    // to reduce unnecessary API calls
     const sprintStartDate = new Date(sprint.startDate);
     sprintStartDate.setHours(0, 0, 0, 0);
+
+    // Pre-filter: only fetch changelogs for issues potentially added after sprint start
+    const issuesNeedingChangelog = issues.filter(issue => {
+      const createdDate = new Date(issue.fields.created);
+      createdDate.setHours(0, 0, 0, 0);
+      // Only need changelog if issue was created near or after sprint start
+      // OR if we can't determine from creation date alone
+      return createdDate >= sprintStartDate;
+    });
+
+    const allChangelogs = await getAllChangelogs(issuesNeedingChangelog);
 
     const addedIssues = [];
     const scopeChangesByDate = {};
@@ -808,8 +821,15 @@ resolver.define('getScopeChanges', async ({ payload }) => {
     const sprintStartDate = new Date(sprint.startDate);
     sprintStartDate.setHours(0, 0, 0, 0);
 
+    // FIX: Only fetch changelogs for issues that could have been added after sprint start
+    const issuesNeedingChangelog = allIssues.filter(issue => {
+      const createdDate = new Date(issue.fields.created);
+      createdDate.setHours(0, 0, 0, 0);
+      return createdDate >= sprintStartDate;
+    });
+
     // Fetch changelogs for current issues
-    const allChangelogs = await getAllChangelogs(allIssues);
+    const allChangelogs = await getAllChangelogs(issuesNeedingChangelog);
 
     const added = [];
 

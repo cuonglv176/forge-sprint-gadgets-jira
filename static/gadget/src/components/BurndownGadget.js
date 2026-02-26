@@ -24,26 +24,6 @@ const BurndownGadget = () => {
   const [resettingBaseline, setResettingBaseline] = useState(false);
   const [resetMessage, setResetMessage] = useState(null);
 
-  // Reset baseline
-  const handleResetBaseline = useCallback(async () => {
-    if (!config.boardId) return;
-    setResettingBaseline(true);
-    setResetMessage(null);
-    try {
-      const result = await invoke('deleteBaseline', { boardId: config.boardId });
-      if (result.success) {
-        setResetMessage({ type: 'success', text: 'Baseline reset! Reloading data...' });
-        setTimeout(() => { setResetMessage(null); loadData(); }, 1500);
-      } else {
-        setResetMessage({ type: 'error', text: result.error || 'Failed to reset baseline' });
-      }
-    } catch (err) {
-      setResetMessage({ type: 'error', text: err.message });
-    } finally {
-      setResettingBaseline(false);
-    }
-  }, [config.boardId, loadData]);
-
   // Load configuration
   const loadConfig = useCallback(async () => {
     try {
@@ -84,6 +64,26 @@ const BurndownGadget = () => {
       setLoading(false);
     }
   }, [config.boardId, config.teamSize, selectedMember]);
+
+  // Reset baseline - declared AFTER loadData to avoid stale closure
+  const handleResetBaseline = useCallback(async () => {
+    if (!config.boardId) return;
+    setResettingBaseline(true);
+    setResetMessage(null);
+    try {
+      const result = await invoke('deleteBaseline', { boardId: config.boardId });
+      if (result.success) {
+        setResetMessage({ type: 'success', text: 'Baseline reset! Reloading data...' });
+        setTimeout(() => { setResetMessage(null); loadData(); }, 1500);
+      } else {
+        setResetMessage({ type: 'error', text: result.error || 'Failed to reset baseline' });
+      }
+    } catch (err) {
+      setResetMessage({ type: 'error', text: err.message });
+    } finally {
+      setResettingBaseline(false);
+    }
+  }, [config.boardId, loadData]);
 
   useEffect(() => {
     loadConfig();
