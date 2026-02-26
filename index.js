@@ -34,6 +34,29 @@ const formatDate = (dateStr) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
 };
 
+// Status sorting helper: In Progress -> To Do -> Done
+const STATUS_ORDER = {
+  'in progress': 1, 'in progress - main task': 1,
+  'to do': 2, 'open': 2, 'backlog': 2, 'hold': 2,
+  'done': 3, 'closed': 3, 'resolved': 3, 'complete': 3
+};
+
+const getStatusOrder = (statusName) => {
+  const lower = (statusName || '').toLowerCase();
+  for (const [key, order] of Object.entries(STATUS_ORDER)) {
+    if (lower.includes(key)) return order;
+  }
+  return 2; // default to "To Do" group
+};
+
+const sortByStatus = (items, statusField = 'status') => {
+  return items.sort((a, b) => {
+    const orderA = getStatusOrder(a[statusField]);
+    const orderB = getStatusOrder(b[statusField]);
+    return orderA - orderB;
+  });
+};
+
 // ============ JIRA API CALLS ============
 const getBoards = async () => {
   const response = await api.asUser().requestJira(
@@ -93,6 +116,46 @@ const getSprintIssues = async (sprintId) => {
   return allIssues;
 };
 
+// ============ WORKLOG API ============
+const getIssueWorklogs = async (issueKey) => {
+  try {
+    let allWorklogs = [];
+    let startAt = 0;
+    const maxResults = 100;
+
+    do {
+      const response = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}/worklog?startAt=${startAt}&maxResults=${maxResults}`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      allWorklogs = allWorklogs.concat(data.worklogs || []);
+      if (allWorklogs.length >= (data.total || 0)) break;
+      startAt += maxResults;
+    } while (true);
+
+    return allWorklogs;
+  } catch (e) {
+    return [];
+  }
+};
+
+const getAllWorklogs = async (issues) => {
+  const BATCH_SIZE = 10;
+  const allWorklogs = [];
+
+  for (let i = 0; i < issues.length; i += BATCH_SIZE) {
+    const batch = issues.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(issue => getIssueWorklogs(issue.key))
+    );
+    results.forEach(worklogs => allWorklogs.push(...worklogs));
+  }
+
+  return allWorklogs;
+};
+
 // ============ RESOLVERS ============
 resolver.define('getBoards', async () => {
   try {
@@ -133,19 +196,42 @@ const getSprintBaseline = async (sprintId) => {
 };
 
 const saveSprintBaseline = async (sprintId, issues) => {
+  // Filter out Done/Closed/Resolved issues - they may be done from previous sprint
+  const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
+  const activeIssues = issues.filter(i => {
+    const status = (i.fields.status?.name || '').toLowerCase();
+    return !doneStatuses.some(s => status.includes(s));
+  });
+
   const baseline = {
     sprintId,
     createdAt: new Date().toISOString(),
-    issues: issues.map(i => ({
+    issueCount: activeIssues.length,
+    issues: activeIssues.map(i => ({
       key: i.key,
+      summary: i.fields.summary,
       originalEstimate: secondsToHours(i.fields.timeoriginalestimate),
-      assignee: i.fields.assignee?.displayName || null
+      remainingEstimate: secondsToHours(i.fields.timeestimate),
+      timeSpent: secondsToHours(i.fields.timespent),
+      assignee: i.fields.assignee?.displayName || null,
+      status: i.fields.status?.name || 'To Do',
+      issueType: i.fields.issuetype?.name || 'Task'
     }))
   };
   await storage.set(`baseline-${sprintId}`, baseline);
   return baseline;
 };
 
+const deleteSprintBaseline = async (sprintId) => {
+  try {
+    await storage.delete(`baseline-${sprintId}`);
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
+// ============ BURNDOWN DATA ============
 resolver.define('getBurndownData', async ({ payload }) => {
   try {
     const { boardId, assignee, teamSize: configTeamSize } = payload;
@@ -158,6 +244,23 @@ resolver.define('getBurndownData', async ({ payload }) => {
     
     // Get or create baseline
     let baseline = await getSprintBaseline(sprint.id);
+    
+    // Auto-detect corrupted baseline: if baseline has much fewer issues than current non-done issues
+    if (baseline) {
+      const doneStatuses = ['done', 'closed', 'resolved', 'complete'];
+      const currentActiveCount = allIssues.filter(i => {
+        const status = (i.fields.status?.name || '').toLowerCase();
+        return !doneStatuses.some(s => status.includes(s));
+      }).length;
+      
+      // If baseline has less than 30% of current active issues, it's likely corrupted
+      if (baseline.issues.length < currentActiveCount * 0.3 && baseline.issues.length < 10) {
+        console.log(`Baseline corrupted: ${baseline.issues.length} vs ${currentActiveCount} active issues. Recreating...`);
+        await deleteSprintBaseline(sprint.id);
+        baseline = null;
+      }
+    }
+    
     if (!baseline) {
       baseline = await saveSprintBaseline(sprint.id, allIssues);
     }
@@ -173,7 +276,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
       teamSize = 1;
       
-      // Also filter baseline for this assignee
       if (filteredBaseline?.issues) {
         filteredBaseline = {
           ...baseline,
@@ -189,14 +291,14 @@ resolver.define('getBurndownData', async ({ payload }) => {
     // Max Capacity = workingDays × 8h × teamSize
     const maxCapacity = workingDays * HOURS_PER_DAY * teamSize;
     
-    // Original Estimate from baseline
+    // Original Estimate from baseline (non-Done issues at sprint start)
     const totalOriginalEstimate = filteredBaseline?.issues?.reduce((sum, item) => 
       sum + (item.originalEstimate || 0), 0
     ) || issues.reduce((sum, issue) => 
       sum + secondsToHours(issue.fields.timeoriginalestimate), 0
     );
     
-    // Current metrics
+    // Current metrics from ALL issues (including Done)
     const currentRemaining = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timeestimate), 0);
     const totalSpent = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timespent), 0);
     
@@ -204,11 +306,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const baselineKeys = new Set(filteredBaseline?.issues?.map(i => i.key) || []);
     const currentKeys = new Set(issues.map(i => i.key));
     
-    const addedIssues = issues.filter(i => {
-      const created = new Date(i.fields.created);
-      return created > startDate && !baselineKeys.has(i.key);
-    });
-    
+    const addedIssues = issues.filter(i => !baselineKeys.has(i.key));
     const removedIssues = filteredBaseline?.issues?.filter(b => !currentKeys.has(b.key)) || [];
     
     const scopeAddedTotal = addedIssues.reduce((sum, issue) => 
@@ -219,18 +317,22 @@ resolver.define('getBurndownData', async ({ payload }) => {
       sum + (item.originalEstimate || 0), 0
     );
     
-    // Generate data points
-    const dataPoints = [];
-    const current = new Date(startDate);
-    let workingDayCount = 0;
-    const dailyDecrease = maxCapacity / workingDays;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // ============ WORKLOG-BASED REMAINING ============
+    // Fetch all worklogs for all issues
+    const allWorklogs = await getAllWorklogs(issues);
+    
+    // Group worklogs by date
+    const worklogByDate = {};
+    allWorklogs.forEach(wl => {
+      const dateStr = wl.started ? wl.started.split('T')[0] : null;
+      if (dateStr) {
+        if (!worklogByDate[dateStr]) worklogByDate[dateStr] = 0;
+        worklogByDate[dateStr] += secondsToHours(wl.timeSpentSeconds || 0);
+      }
+    });
     
     // Track scope changes by date
     const scopeChangesByDate = {};
-    
-    // Track added issues by creation date
     addedIssues.forEach(issue => {
       const addedDate = new Date(issue.fields.created).toISOString().split('T')[0];
       if (!scopeChangesByDate[addedDate]) {
@@ -239,8 +341,9 @@ resolver.define('getBurndownData', async ({ payload }) => {
       scopeChangesByDate[addedDate].added += secondsToHours(issue.fields.timeoriginalestimate);
     });
     
-    // Track removed issues - assign to today's date
     if (removedIssues.length > 0) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
       const removedDate = today <= endDate 
         ? today.toISOString().split('T')[0]
         : endDate.toISOString().split('T')[0];
@@ -252,34 +355,78 @@ resolver.define('getBurndownData', async ({ payload }) => {
       });
     }
     
-    // Generate data points for ALL calendar days (including weekends)
+    // Generate data points
+    const dataPoints = [];
+    const current = new Date(startDate);
+    let workingDayCount = 0;
+    const dailyDecrease = maxCapacity / workingDays;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Remaining calculation: start from totalOriginalEstimate, subtract logged, add scope added, subtract scope removed
+    let runningRemaining = totalOriginalEstimate;
+    let cumulativeLogged = 0;
+    
+    // Start Sprint data point (before first day)
+    dataPoints.push({
+      date: 'start',
+      displayDate: 'Start Sprint',
+      ideal: Math.round(maxCapacity * 10) / 10,
+      remaining: Math.round(totalOriginalEstimate * 10) / 10,
+      timeLogged: 0,
+      dayLogged: 0,
+      cumulativeLogged: 0,
+      added: 0,
+      removed: 0
+    });
+    
+    // Generate data points for ALL calendar days
     while (current <= endDate) {
       if (isWorkingDay(current) && current > startDate) {
         workingDayCount++;
       }
       
-      // Ideal: from maxCapacity decreasing linearly to 0
       const ideal = Math.max(0, maxCapacity - (dailyDecrease * workingDayCount));
-      
       const dateStr = current.toISOString().split('T')[0];
       const currentDate = new Date(current);
       currentDate.setHours(0, 0, 0, 0);
       const isPastOrToday = currentDate <= today;
       
-      // Scope changes for this date
       const scopeChange = scopeChangesByDate[dateStr] || { added: 0, removed: 0 };
+      const dayLogged = worklogByDate[dateStr] || 0;
+      
+      if (isPastOrToday) {
+        cumulativeLogged += dayLogged;
+        // Remaining = previous remaining - dayLogged + added - removed
+        runningRemaining = runningRemaining - dayLogged + scopeChange.added - scopeChange.removed;
+      }
       
       dataPoints.push({
         date: dateStr,
         displayDate: formatDate(dateStr),
         ideal: Math.round(ideal * 10) / 10,
-        remaining: isPastOrToday ? Math.round(currentRemaining * 10) / 10 : null,
-        timeLogged: isPastOrToday ? Math.round(totalSpent * 10) / 10 : null,
+        remaining: isPastOrToday ? Math.round(runningRemaining * 10) / 10 : null,
+        timeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
+        dayLogged: isPastOrToday ? Math.round(dayLogged * 10) / 10 : null,
+        cumulativeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
         added: scopeChange.added > 0 ? Math.round(scopeChange.added * 10) / 10 : 0,
         removed: scopeChange.removed > 0 ? -Math.round(scopeChange.removed * 10) / 10 : 0
       });
       current.setDate(current.getDate() + 1);
     }
+    
+    // Issue details for debug panel
+    const issueDetails = issues.map(i => ({
+      key: i.key,
+      summary: i.fields.summary,
+      assignee: i.fields.assignee?.displayName || 'Unassigned',
+      status: i.fields.status?.name || 'To Do',
+      originalEstimate: secondsToHours(i.fields.timeoriginalestimate),
+      remainingEstimate: secondsToHours(i.fields.timeestimate),
+      timeSpent: secondsToHours(i.fields.timespent),
+      issueType: i.fields.issuetype?.name || 'Task'
+    }));
+    sortByStatus(issueDetails);
     
     return {
       success: true,
@@ -298,7 +445,9 @@ resolver.define('getBurndownData', async ({ payload }) => {
         teamSize,
         assignees: allAssignees,
         addedIssuesCount: addedIssues.length,
-        removedIssuesCount: removedIssues.length
+        removedIssuesCount: removedIssues.length,
+        issueDetails,
+        baselineIssueCount: filteredBaseline?.issues?.length || 0
       }
     };
   } catch (error) {
@@ -306,6 +455,23 @@ resolver.define('getBurndownData', async ({ payload }) => {
   }
 });
 
+// ============ DELETE BASELINE ============
+resolver.define('deleteBaseline', async ({ payload }) => {
+  try {
+    const { boardId } = payload;
+    if (!boardId) return { success: false, error: 'Board ID is required' };
+    
+    const sprint = await getActiveSprint(boardId);
+    if (!sprint) return { success: false, error: 'No active sprint found' };
+    
+    await deleteSprintBaseline(sprint.id);
+    return { success: true, message: `Baseline for sprint ${sprint.name} deleted. It will be recreated on next load.` };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============ SPRINT HEALTH ============
 resolver.define('getSprintHealth', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
@@ -339,6 +505,7 @@ resolver.define('getSprintHealth', async ({ payload }) => {
   }
 });
 
+// ============ AT RISK ITEMS ============
 resolver.define('getAtRiskItems', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
@@ -383,12 +550,16 @@ resolver.define('getAtRiskItems', async ({ payload }) => {
       }
     });
     
+    // Sort by status: In Progress -> To Do -> Done
+    sortByStatus(atRiskItems);
+    
     return { success: true, data: { items: atRiskItems, total: atRiskItems.length, sprintName: sprint.name } };
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
+// ============ SCOPE CHANGES ============
 resolver.define('getScopeChanges', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
@@ -402,12 +573,13 @@ resolver.define('getScopeChanges', async ({ payload }) => {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
     
-    const sprintStart = new Date(sprint.startDate);
-    const added = [];
+    // Get baseline to detect scope changes properly
+    const baseline = await getSprintBaseline(sprint.id);
+    const baselineKeys = new Set(baseline?.issues?.map(i => i.key) || []);
     
+    const added = [];
     issues.forEach(issue => {
-      const created = new Date(issue.fields.created);
-      if (created > sprintStart) {
+      if (!baselineKeys.has(issue.key)) {
         added.push({
           key: issue.key, summary: issue.fields.summary,
           assignee: issue.fields.assignee?.displayName || 'Unassigned',
@@ -419,15 +591,30 @@ resolver.define('getScopeChanges', async ({ payload }) => {
       }
     });
     
+    // Detect removed issues (in baseline but not in current sprint)
+    const currentKeys = new Set(issues.map(i => i.key));
+    const removed = (baseline?.issues || []).filter(b => !currentKeys.has(b.key)).map(b => ({
+      key: b.key, summary: b.summary || b.key,
+      assignee: b.assignee || 'Unassigned',
+      priority: null,
+      status: b.status || 'Removed',
+      changeType: 'REMOVED',
+      originalEstimate: b.originalEstimate || 0
+    }));
+    
+    // Sort by status
+    sortByStatus(added);
+    
     return {
       success: true,
-      data: { added, removed: [], priorityChanged: [], totalAdded: added.length, totalRemoved: 0, totalPriorityChanged: 0, sprintName: sprint.name }
+      data: { added, removed, priorityChanged: [], totalAdded: added.length, totalRemoved: removed.length, totalPriorityChanged: 0, sprintName: sprint.name }
     };
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
+// ============ HIGH PRIORITY ITEMS ============
 resolver.define('getHighPriorityItems', async ({ payload }) => {
   try {
     const { boardId, assignee, expand } = payload;
@@ -442,7 +629,6 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
     }
     
     const priorityOrder = { 'Highest': 1, 'High': 2, 'Medium': 3, 'Low': 4, 'Lowest': 5 };
-    const doneStatuses = ['done', 'closed', 'resolved'];
     
     const allItems = issues.map(issue => ({
       key: issue.key, summary: issue.fields.summary,
@@ -455,16 +641,14 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
       timeSpent: secondsToHours(issue.fields.timespent)
     }));
     
+    // Sort by status first (In Progress -> To Do -> Done), then by priority
     allItems.sort((a, b) => {
+      const statusA = getStatusOrder(a.status);
+      const statusB = getStatusOrder(b.status);
+      if (statusA !== statusB) return statusA - statusB;
       const pA = priorityOrder[a.priority] || 3;
       const pB = priorityOrder[b.priority] || 3;
-      if (pA !== pB) return pA - pB;
-      const aIsDone = doneStatuses.some(s => a.status?.toLowerCase().includes(s));
-      const bIsDone = doneStatuses.some(s => b.status?.toLowerCase().includes(s));
-      if (aIsDone !== bIsDone) return aIsDone ? 1 : -1;
-      const dateA = a.dueDate ? new Date(a.dueDate) : new Date('9999-12-31');
-      const dateB = b.dueDate ? new Date(b.dueDate) : new Date('9999-12-31');
-      return dateA - dateB;
+      return pA - pB;
     });
     
     const displayItems = expand ? allItems : allItems.slice(0, 5);
@@ -487,6 +671,7 @@ resolver.define('getHighPriorityItems', async ({ payload }) => {
   }
 });
 
+// ============ RELEASE DATA ============
 resolver.define('getReleaseData', async ({ payload }) => {
   try {
     const { boardId, assignee } = payload;
@@ -534,12 +719,16 @@ resolver.define('getReleaseData', async ({ payload }) => {
       });
     });
     
-    const releases = Array.from(releaseMap.values()).map(r => ({
-      ...r,
-      progress: r.totalIssues > 0 ? Math.round((r.doneIssues / r.totalIssues) * 100) : 0,
-      totalEstimate: Math.round(r.totalEstimate * 10) / 10,
-      doneEstimate: Math.round(r.doneEstimate * 10) / 10
-    }));
+    const releases = Array.from(releaseMap.values()).map(r => {
+      // Sort issues within each release by status
+      sortByStatus(r.issues);
+      return {
+        ...r,
+        progress: r.totalIssues > 0 ? Math.round((r.doneIssues / r.totalIssues) * 100) : 0,
+        totalEstimate: Math.round(r.totalEstimate * 10) / 10,
+        doneEstimate: Math.round(r.doneEstimate * 10) / 10
+      };
+    });
     
     releases.sort((a, b) => {
       if (a.released !== b.released) return a.released ? 1 : -1;

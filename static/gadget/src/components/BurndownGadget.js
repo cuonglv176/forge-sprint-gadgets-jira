@@ -4,7 +4,6 @@ import GadgetWrapper from './GadgetWrapper';
 import {
   ComposedChart,
   Bar,
-  Cell,
   Line,
   XAxis,
   YAxis,
@@ -94,10 +93,8 @@ const BurndownGadget = () => {
         }}>
           <p style={{ fontWeight: '600', marginBottom: '8px', color: '#172B4D' }}>{label}</p>
           {payload.map((entry, index) => {
-            // Skip if value is null or 0
             if (entry.value == null || entry.value === 0) return null;
 
-            // For remaining, show the color based on whether it's the red portion
             let displayColor = entry.color;
             let displayName = entry.name;
             if (entry.dataKey === 'remainingNegative') {
@@ -134,7 +131,6 @@ const BurndownGadget = () => {
   // Custom Legend
   const renderLegend = (props) => {
     const { payload } = props;
-    // Filter out remainingNegative from legend (it's shown as part of Remaining)
     const filteredPayload = payload.filter(entry => entry.dataKey !== 'remainingNegative');
     return (
       <div className="legend" style={{
@@ -171,7 +167,7 @@ const BurndownGadget = () => {
     );
   };
 
-  // Not configured - wrapped in GadgetWrapper which handles this
+  // Not configured
   if (!config.boardId && !loading) {
     return (
       <GadgetWrapper
@@ -198,7 +194,7 @@ const BurndownGadget = () => {
   if (error) {
     return (
       <div className="error">
-        <p>⚠️ {error}</p>
+        <p>{error}</p>
         <button className="btn btn-secondary" style={{ marginTop: '12px' }} onClick={loadData}>
           Retry
         </button>
@@ -223,13 +219,18 @@ const BurndownGadget = () => {
     teamSize,
     assignees,
     addedIssuesCount,
-    removedIssuesCount
+    removedIssuesCount,
+    issueDetails,
+    baselineIssueCount
   } = data;
 
   // Calculate daily decrease for debug display
-  const dailyDecrease = workingDays > 1
-    ? totalOriginalEstimate / (workingDays - 1)
-    : totalOriginalEstimate;
+  const dailyDecrease = workingDays > 0
+    ? maxCapacity / workingDays
+    : maxCapacity;
+
+  // Jira base URL for clickable issue keys
+  const jiraBaseUrl = 'https://jeisysvn.atlassian.net/browse/';
 
   return (
     <GadgetWrapper
@@ -311,7 +312,7 @@ const BurndownGadget = () => {
         )}
       </div>
 
-      {/* Sprint Info - Show start/end dates from sprint */}
+      {/* Sprint Info */}
       <div className="capacity-info" style={{ marginTop: '12px' }}>
         <span style={{ fontWeight: '600', color: '#344563' }}>Sprint Duration</span>
         <div className="capacity-line"></div>
@@ -360,7 +361,7 @@ const BurndownGadget = () => {
             <Tooltip content={<CustomTooltip />} />
             <Legend content={renderLegend} />
 
-            {/* Zero line - Important for negative bars */}
+            {/* Zero line */}
             <ReferenceLine
               y={0}
               stroke="#42526E"
@@ -372,7 +373,7 @@ const BurndownGadget = () => {
               }}
             />
 
-            {/* Scope Removed (Negative Bar - Below Baseline, Red) */}
+            {/* Scope Removed (Negative Bar) */}
             <Bar
               dataKey="removed"
               fill="#DE350B"
@@ -381,7 +382,7 @@ const BurndownGadget = () => {
               stackId="burndown"
             />
 
-            {/* Remaining Estimate (Main Bar) - Blue above baseline */}
+            {/* Remaining Estimate (Main Bar) */}
             <Bar
               dataKey="remaining"
               name="Remaining"
@@ -390,7 +391,7 @@ const BurndownGadget = () => {
               stackId="burndown"
             />
 
-            {/* Scope Added (Stacked on Top of Remaining, Orange) */}
+            {/* Scope Added (Stacked on Top) */}
             <Bar
               dataKey="added"
               fill="#FF991F"
@@ -399,7 +400,7 @@ const BurndownGadget = () => {
               stackId="burndown"
             />
 
-            {/* Ideal Burndown Line (Based on Original Estimate, linear to 0) */}
+            {/* Ideal Burndown Line */}
             <Line
               type="linear"
               dataKey="ideal"
@@ -442,16 +443,14 @@ const BurndownGadget = () => {
               <li>
                 <span style={{ color: '#FF991F', fontWeight: '600' }}>
                   +{addedIssuesCount} issue{addedIssuesCount > 1 ? 's' : ''}
-                </span> added to sprint
-                ({scopeAddedTotal}h)
+                </span> added to sprint ({scopeAddedTotal}h)
               </li>
             )}
             {removedIssuesCount > 0 && (
               <li>
                 <span style={{ color: '#DE350B', fontWeight: '600' }}>
                   -{removedIssuesCount} issue{removedIssuesCount > 1 ? 's' : ''}
-                </span> removed from sprint
-                ({scopeRemovedTotal}h)
+                </span> removed from sprint ({scopeRemovedTotal}h)
               </li>
             )}
           </ul>
@@ -467,10 +466,10 @@ const BurndownGadget = () => {
         borderTop: '1px solid #DFE1E6'
       }}>
         <strong>Legend:</strong>
-        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear burndown from Original Estimate ({totalOriginalEstimate}h)
-        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = Per-day remaining (OE - logged + added - removed)
+        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear from Max Capacity ({maxCapacity}h) to 0
+        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = OE - cumulative logged + scope changes
         <span style={{ color: '#FF991F', marginLeft: '12px' }}>■</span> Added = Tasks added after sprint start
-        <span style={{ color: '#DE350B', marginLeft: '12px' }}>■</span> Removed = Tasks removed from sprint (below baseline)
+        <span style={{ color: '#DE350B', marginLeft: '12px' }}>■</span> Removed = Tasks removed from sprint
       </div>
 
       {/* Debug Panel */}
@@ -503,10 +502,10 @@ const BurndownGadget = () => {
             fontFamily: 'monospace',
             lineHeight: '1.6',
             whiteSpace: 'pre-wrap',
-            maxHeight: '400px',
+            maxHeight: '600px',
             overflow: 'auto'
           }}>
-            <div style={{ fontWeight: '700', marginBottom: '8px', color: '#DE350B' }}>🔍 DEBUG DATA</div>
+            <div style={{ fontWeight: '700', marginBottom: '8px', color: '#DE350B' }}>DEBUG DATA</div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Capacity ──</div>
             <div>workingDays = {workingDays}</div>
@@ -514,17 +513,21 @@ const BurndownGadget = () => {
             <div>maxCapacity = {workingDays} × 8 × {teamSize} = <b>{maxCapacity}h</b></div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Ideal Line ──</div>
-            <div>startValue = totalOriginalEstimate = <b>{totalOriginalEstimate}h</b></div>
-            <div>dailyDecrease = {totalOriginalEstimate} / ({workingDays} - 1) = <b>{dailyDecrease.toFixed(2)}h/day</b></div>
+            <div>startValue = maxCapacity = <b>{maxCapacity}h</b></div>
+            <div>dailyDecrease = {maxCapacity} / {workingDays} = <b>{dailyDecrease.toFixed(2)}h/day</b></div>
             <div>endValue = 0h (at last working day)</div>
 
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Baseline ──</div>
+            <div>baselineIssueCount = <b>{baselineIssueCount}</b> (excluding Done tasks)</div>
+            <div>totalOriginalEstimate (from baseline) = <b>{totalOriginalEstimate}h</b></div>
+
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Estimates ──</div>
-            <div>totalOriginalEstimate (tasks only) = <b>{totalOriginalEstimate}h</b></div>
+            <div>totalOriginalEstimate = <b>{totalOriginalEstimate}h</b></div>
             <div>currentRemaining (Jira field) = <b>{currentRemaining}h</b></div>
             <div>totalSpent (Jira field) = <b>{totalSpent}h</b></div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Remaining Calculation ──</div>
-            <div>Formula: Remain(day0) = totalOriginalEstimate = {totalOriginalEstimate}h</div>
+            <div>Formula: Remain(Start) = totalOriginalEstimate = {totalOriginalEstimate}h</div>
             <div>Formula: Remain(dayN) = Remain(dayN-1) - Logged(dayN) + Added(dayN) - Removed(dayN)</div>
             <div>Source: Worklogs fetched via /rest/api/3/issue/KEY/worklog API</div>
 
@@ -541,7 +544,7 @@ const BurndownGadget = () => {
             <div>startDate = {sprintStartDate}</div>
             <div>endDate = {sprintEndDate}</div>
 
-            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Data Points ({dataPoints?.length}) ──</div>
+            <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '12px' }}>── Data Points ({dataPoints?.length}) ──</div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px', marginTop: '4px' }}>
               <thead>
                 <tr style={{ background: '#DFE1E6' }}>
@@ -557,17 +560,89 @@ const BurndownGadget = () => {
               <tbody>
                 {dataPoints?.map((dp, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#F4F5F7' }}>
-                    <td style={{ padding: '2px 4px', border: '1px solid #C1C7D0' }}>{dp.date}</td>
+                    <td style={{ padding: '2px 4px', border: '1px solid #C1C7D0' }}>{dp.displayDate || dp.date}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>{dp.ideal}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>{dp.remaining ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.dayLogged ?? '-'}</td>
-                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.timeLogged ?? '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.cumulativeLogged ?? dp.timeLogged ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#FF991F' }}>{dp.added || '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#DE350B' }}>{dp.removed || '-'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+
+            {/* Issue Details Table */}
+            {issueDetails && issueDetails.length > 0 && (
+              <>
+                <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '12px' }}>── Issue Details ({issueDetails.length} issues) ──</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px', marginTop: '4px' }}>
+                  <thead>
+                    <tr style={{ background: '#DFE1E6' }}>
+                      <th style={{ padding: '3px 4px', textAlign: 'left', border: '1px solid #C1C7D0' }}>Key</th>
+                      <th style={{ padding: '3px 4px', textAlign: 'left', border: '1px solid #C1C7D0' }}>Summary</th>
+                      <th style={{ padding: '3px 4px', textAlign: 'left', border: '1px solid #C1C7D0' }}>Status</th>
+                      <th style={{ padding: '3px 4px', textAlign: 'left', border: '1px solid #C1C7D0' }}>Assignee</th>
+                      <th style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>OE</th>
+                      <th style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Remain</th>
+                      <th style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>Spent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {issueDetails.map((issue, i) => {
+                      const statusColor = issue.status?.toLowerCase().includes('done') ? '#36B37E'
+                        : issue.status?.toLowerCase().includes('progress') ? '#0065FF'
+                        : '#42526E';
+                      return (
+                        <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#F4F5F7' }}>
+                          <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0' }}>
+                            <a
+                              href={`${jiraBaseUrl}${issue.key}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: '#0065FF', textDecoration: 'none', fontWeight: '600' }}
+                            >
+                              {issue.key}
+                            </a>
+                          </td>
+                          <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {issue.summary}
+                          </td>
+                          <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0', color: statusColor, fontWeight: '600' }}>
+                            {issue.status}
+                          </td>
+                          <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0' }}>
+                            {issue.assignee}
+                          </td>
+                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>
+                            {issue.originalEstimate}h
+                          </td>
+                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>
+                            {issue.remainingEstimate}h
+                          </td>
+                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>
+                            {issue.timeSpent}h
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {/* Totals row */}
+                    <tr style={{ background: '#DFE1E6', fontWeight: '700' }}>
+                      <td colSpan={4} style={{ padding: '3px 4px', border: '1px solid #C1C7D0', textAlign: 'right' }}>TOTAL</td>
+                      <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>
+                        {issueDetails.reduce((s, i) => s + (i.originalEstimate || 0), 0).toFixed(1)}h
+                      </td>
+                      <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>
+                        {issueDetails.reduce((s, i) => s + (i.remainingEstimate || 0), 0).toFixed(1)}h
+                      </td>
+                      <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>
+                        {issueDetails.reduce((s, i) => s + (i.timeSpent || 0), 0).toFixed(1)}h
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </>
+            )}
           </div>
         )}
       </div>
