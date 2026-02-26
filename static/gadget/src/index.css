@@ -203,18 +203,23 @@ body {
 }
 
 .badge-change-added {
-  background: #F0FFF4;
-  color: #216E4E;
+  background: #E3FCEF;
+  color: #006644;
+  border: 1px solid #ABF5D1;
+  font-weight: 600;
 }
 
 .badge-change-removed {
-  background: #FFF0F0;
+  background: #FFEBE6;
   color: #AE2A19;
+  border: 1px solid #FFBDAD;
+  font-weight: 600;
 }
 
 .badge-change-priority {
   background: #FFF7E6;
-  color: #8B6914;
+  color: #974F0C;
+  border: 1px solid #FFC400;
 }
 
 .badge-status-done {

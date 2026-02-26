@@ -134,17 +134,17 @@ const ChangesGadget = () => {
 
       {/* Summary */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FAFBFC', border: '1px solid #EBECF0', borderRadius: '4px' }}>
-          <div style={{ fontSize: '18px', fontWeight: '600', color: '#172B4D' }}>{totalAdded}</div>
-          <div style={{ fontSize: '10px', color: '#7A869A' }}>Added</div>
+        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#F1FBF5', border: '1px solid #C3E6CB', borderRadius: '4px', borderTop: '3px solid #57D9A3' }}>
+          <div style={{ fontSize: '18px', fontWeight: '600', color: '#006644' }}>+{totalAdded}</div>
+          <div style={{ fontSize: '10px', color: '#006644' }}>Added</div>
         </div>
-        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FAFBFC', border: '1px solid #EBECF0', borderRadius: '4px' }}>
-          <div style={{ fontSize: '18px', fontWeight: '600', color: '#172B4D' }}>{totalRemoved}</div>
-          <div style={{ fontSize: '10px', color: '#7A869A' }}>Removed</div>
+        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FFF5F5', border: '1px solid #FCDADA', borderRadius: '4px', borderTop: '3px solid #EF5C48' }}>
+          <div style={{ fontSize: '18px', fontWeight: '600', color: '#AE2A19' }}>-{totalRemoved}</div>
+          <div style={{ fontSize: '10px', color: '#AE2A19' }}>Removed</div>
         </div>
-        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FAFBFC', border: '1px solid #EBECF0', borderRadius: '4px' }}>
-          <div style={{ fontSize: '18px', fontWeight: '600', color: '#172B4D' }}>{totalPriorityChanged}</div>
-          <div style={{ fontSize: '10px', color: '#7A869A' }}>Priority</div>
+        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FFF8F0', border: '1px solid #FCE5C8', borderRadius: '4px', borderTop: '3px solid #F5A623' }}>
+          <div style={{ fontSize: '18px', fontWeight: '600', color: '#974F0C' }}>{totalPriorityChanged}</div>
+          <div style={{ fontSize: '10px', color: '#974F0C' }}>Priority</div>
         </div>
       </div>
 

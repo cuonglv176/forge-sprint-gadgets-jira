@@ -237,36 +237,38 @@ const PriorityGadget = () => {
           minWidth: expanded ? '60px' : '80px',
           textAlign: 'center',
           padding: expanded ? '8px 4px' : '12px',
-          background: '#FAFBFC',
-          border: '1px solid #EBECF0',
-          borderRadius: '4px'
+          background: '#FFF5F5',
+          border: '1px solid #FCDADA',
+          borderRadius: '4px',
+          borderTop: '3px solid #EF5C48'
         }}>
           <div style={{
             fontSize: expanded ? '16px' : '20px',
             fontWeight: '600',
-            color: '#172B4D'
+            color: '#AE2A19'
           }}>
             {highestCount}
           </div>
-          <div style={{ fontSize: '10px', color: '#7A869A' }}>Highest</div>
+          <div style={{ fontSize: '10px', color: '#AE2A19' }}>Highest</div>
         </div>
         <div style={{
           flex: 1,
           minWidth: expanded ? '60px' : '80px',
           textAlign: 'center',
           padding: expanded ? '8px 4px' : '12px',
-          background: '#FAFBFC',
-          border: '1px solid #EBECF0',
-          borderRadius: '4px'
+          background: '#FFF8F0',
+          border: '1px solid #FCE5C8',
+          borderRadius: '4px',
+          borderTop: '3px solid #F5A623'
         }}>
           <div style={{
             fontSize: expanded ? '16px' : '20px',
             fontWeight: '600',
-            color: '#172B4D'
+            color: '#974F0C'
           }}>
             {highCount}
           </div>
-          <div style={{ fontSize: '10px', color: '#7A869A' }}>High</div>
+          <div style={{ fontSize: '10px', color: '#974F0C' }}>High</div>
         </div>
         {expanded && (
           <>
@@ -275,42 +277,45 @@ const PriorityGadget = () => {
               minWidth: '60px',
               textAlign: 'center',
               padding: '8px 4px',
-              background: '#FAFBFC',
-              border: '1px solid #EBECF0',
-              borderRadius: '4px'
+              background: '#FFFDF5',
+              border: '1px solid #FCF0C8',
+              borderRadius: '4px',
+              borderTop: '3px solid #FFCF5C'
             }}>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#7A6200' }}>
                 {mediumCount || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#7A869A' }}>Medium</div>
+              <div style={{ fontSize: '10px', color: '#7A6200' }}>Medium</div>
             </div>
             <div style={{
               flex: 1,
               minWidth: '60px',
               textAlign: 'center',
               padding: '8px 4px',
-              background: '#FAFBFC',
-              border: '1px solid #EBECF0',
-              borderRadius: '4px'
+              background: '#F5F9FF',
+              border: '1px solid #D2E5FF',
+              borderRadius: '4px',
+              borderTop: '3px solid #4C9AFF'
             }}>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#0747A6' }}>
                 {lowCount || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#7A869A' }}>Low</div>
+              <div style={{ fontSize: '10px', color: '#0747A6' }}>Low</div>
             </div>
             <div style={{
               flex: 1,
               minWidth: '60px',
               textAlign: 'center',
               padding: '8px 4px',
-              background: '#FAFBFC',
-              border: '1px solid #EBECF0',
-              borderRadius: '4px'
+              background: '#F7F8F9',
+              border: '1px solid #E4E6EA',
+              borderRadius: '4px',
+              borderTop: '3px solid #B3BAC5'
             }}>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#5E6C84' }}>
                 {lowestCount || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#7A869A' }}>Lowest</div>
+              <div style={{ fontSize: '10px', color: '#5E6C84' }}>Lowest</div>
             </div>
           </>
         )}
