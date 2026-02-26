@@ -204,89 +204,167 @@ const getSprintIssues = async (sprintId) => {
   return allIssues;
 };
 
-// FIX: Query removed issues using Agile API as fallback, and also try GET endpoint for JQL "was"
-const getRemovedFromSprintIssues = async (sprintId) => {
+// FIX v2: Query removed issues - use multiple approaches with proper JQL encoding
+const getRemovedFromSprintIssues = async (sprintId, sprintName) => {
+  const fields = 'summary,status,priority,assignee,issuetype,timeoriginalestimate,timeestimate,timespent,created,updated,parent,subtasks';
+  const fieldsArray = fields.split(',');
+
   try {
-    // Method 1: Try JQL "sprint was X AND NOT sprint = X" via GET endpoint
-    const jqlStr = `sprint was ${sprintId} AND sprint != ${sprintId}`;
-    const response = await api.asUser().requestJira(
-      route`/rest/api/3/search?jql=${jqlStr}&fields=summary,status,priority,assignee,issuetype,timeoriginalestimate,timeestimate,timespent,created,updated,parent,subtasks&maxResults=100`,
-      {
-        headers: { 'Accept': 'application/json' }
-      }
-    );
-
-    if (response.ok) {
-      const data = await response.json();
-      const issues = data.issues || [];
-      if (issues.length > 0) {
-        console.log(`[getRemovedFromSprintIssues] Found ${issues.length} removed issues via JQL GET`);
-        return issues;
-      }
-    } else {
-      console.log(`[getRemovedFromSprintIssues] JQL GET failed: ${response.status}`);
-    }
-
-    // Method 2: Fallback - try POST endpoint
-    const requestBody = {
-      jql: `sprint was ${sprintId} AND NOT sprint = ${sprintId}`,
-      fields: [
-        'summary', 'status', 'priority', 'assignee', 'issuetype',
-        'timeoriginalestimate', 'timeestimate', 'timespent',
-        'created', 'updated', 'parent', 'subtasks'
-      ],
-      maxResults: 100
-    };
-
-    const response2 = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    if (response2.ok) {
-      const data2 = await response2.json();
-      const issues2 = data2.issues || [];
-      console.log(`[getRemovedFromSprintIssues] Found ${issues2.length} removed issues via JQL POST`);
-      return issues2;
-    } else {
-      console.log(`[getRemovedFromSprintIssues] JQL POST also failed: ${response2.status}`);
-    }
-
-    // Method 3: Fallback - use Agile API to get all sprint issues (includes completed/removed)
+    // Method 1: JQL with sprint ID via v2 search endpoint (more compatible)
     try {
-      let allSprintIssues = [];
-      let startAt = 0;
-      do {
-        const agileResponse = await api.asUser().requestJira(
-          route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=100&fields=summary,status,priority,assignee,issuetype,timeoriginalestimate,timeestimate,timespent,created,updated,parent,subtasks`,
-          { headers: { 'Accept': 'application/json' } }
-        );
-        if (!agileResponse.ok) break;
-        const agileData = await agileResponse.json();
-        allSprintIssues = allSprintIssues.concat(agileData.issues || []);
-        if (allSprintIssues.length >= (agileData.total || 0)) break;
-        startAt += 100;
-      } while (true);
+      const jqlStr = `sprint was ${sprintId} AND sprint != ${sprintId}`;
+      console.log(`[getRemovedFromSprintIssues] Method 1: JQL v2 GET with ID: ${jqlStr}`);
+      const response = await api.asUser().requestJira(
+        route`/rest/api/2/search?jql=${jqlStr}&fields=${fields}&maxResults=100`,
+        { headers: { 'Accept': 'application/json' } }
+      );
 
-      // Get current sprint issues
-      const currentIssues = await getSprintIssues(sprintId);
-      const currentKeys = new Set(currentIssues.map(i => i.key));
-
-      // Removed = in agile API but not in current sprint JQL
-      const removed = allSprintIssues.filter(i => !currentKeys.has(i.key));
-      console.log(`[getRemovedFromSprintIssues] Found ${removed.length} removed issues via Agile API diff`);
-      return removed;
-    } catch (agileErr) {
-      console.log(`[getRemovedFromSprintIssues] Agile API fallback failed: ${agileErr.message}`);
+      if (response.ok) {
+        const data = await response.json();
+        const issues = data.issues || [];
+        console.log(`[getRemovedFromSprintIssues] Method 1 found ${issues.length} issues`);
+        if (issues.length > 0) return issues;
+      } else {
+        const errText = await response.text();
+        console.log(`[getRemovedFromSprintIssues] Method 1 failed: ${response.status} - ${errText.substring(0, 200)}`);
+      }
+    } catch (e1) {
+      console.log(`[getRemovedFromSprintIssues] Method 1 error: ${e1.message}`);
     }
 
+    // Method 2: JQL with sprint name via v3 POST endpoint
+    if (sprintName) {
+      try {
+        const jqlStr2 = `sprint was "${sprintName}" AND sprint != "${sprintName}"`;
+        console.log(`[getRemovedFromSprintIssues] Method 2: JQL v3 POST with name: ${jqlStr2}`);
+        const requestBody = {
+          jql: jqlStr2,
+          fields: fieldsArray,
+          maxResults: 100
+        };
+
+        const response2 = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+
+        if (response2.ok) {
+          const data2 = await response2.json();
+          const issues2 = data2.issues || [];
+          console.log(`[getRemovedFromSprintIssues] Method 2 found ${issues2.length} issues`);
+          if (issues2.length > 0) return issues2;
+        } else {
+          const errText2 = await response2.text();
+          console.log(`[getRemovedFromSprintIssues] Method 2 failed: ${response2.status} - ${errText2.substring(0, 200)}`);
+        }
+      } catch (e2) {
+        console.log(`[getRemovedFromSprintIssues] Method 2 error: ${e2.message}`);
+      }
+    }
+
+    // Method 3: JQL via v2 POST (different endpoint format)
+    try {
+      const jqlStr3 = `sprint was ${sprintId} AND NOT sprint = ${sprintId}`;
+      console.log(`[getRemovedFromSprintIssues] Method 3: JQL v2 POST: ${jqlStr3}`);
+      const response3 = await api.asUser().requestJira(route`/rest/api/2/search`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jql: jqlStr3,
+          fields: fieldsArray,
+          maxResults: 100
+        })
+      });
+
+      if (response3.ok) {
+        const data3 = await response3.json();
+        const issues3 = data3.issues || [];
+        console.log(`[getRemovedFromSprintIssues] Method 3 found ${issues3.length} issues`);
+        if (issues3.length > 0) return issues3;
+      } else {
+        const errText3 = await response3.text();
+        console.log(`[getRemovedFromSprintIssues] Method 3 failed: ${response3.status} - ${errText3.substring(0, 200)}`);
+      }
+    } catch (e3) {
+      console.log(`[getRemovedFromSprintIssues] Method 3 error: ${e3.message}`);
+    }
+
+    // Method 4: Changelog-based detection - scan recent project issues
+    // This is the most reliable method: find issues whose Sprint changelog shows removal from this sprint
+    if (sprintName) {
+      try {
+        console.log(`[getRemovedFromSprintIssues] Method 4: Changelog-based detection for sprint "${sprintName}"`);
+        // Search for issues updated recently that might have been in this sprint
+        // Use project key from sprint name or board context
+        const projectMatch = sprintName.match(/^([A-Z]+)/);
+        let projectJql = '';
+        if (projectMatch) {
+          projectJql = `project = ${projectMatch[1]} AND `;
+        }
+        // Issues updated in last 30 days that are NOT in current sprint
+        const searchJql = `${projectJql}updated >= -30d AND sprint != ${sprintId} ORDER BY updated DESC`;
+        console.log(`[getRemovedFromSprintIssues] Method 4 JQL: ${searchJql}`);
+
+        const response4 = await api.asUser().requestJira(route`/rest/api/2/search`, {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jql: searchJql,
+            fields: fieldsArray,
+            maxResults: 200
+          })
+        });
+
+        if (response4.ok) {
+          const data4 = await response4.json();
+          const candidateIssues = data4.issues || [];
+          console.log(`[getRemovedFromSprintIssues] Method 4: ${candidateIssues.length} candidate issues to check changelogs`);
+
+          // Check changelogs of candidates to find ones removed from this sprint
+          const removedIssues = [];
+          const BATCH = 5;
+          for (let i = 0; i < Math.min(candidateIssues.length, 100); i += BATCH) {
+            const batch = candidateIssues.slice(i, i + BATCH);
+            const results = await Promise.all(
+              batch.map(async (issue) => {
+                const histories = await getIssueChangelog(issue.key);
+                // Check if any Sprint changelog shows removal from our sprint
+                for (const history of histories) {
+                  for (const item of (history.items || [])) {
+                    if (item.field === 'Sprint') {
+                      const fromStr = item.fromString || '';
+                      const toStr = item.toString || '';
+                      const fromId = item.from || '';
+                      // Was in our sprint (from) and no longer in it (to)
+                      const wasInSprint = fromStr.includes(sprintName) || String(fromId).includes(String(sprintId));
+                      const stillInSprint = toStr.includes(sprintName);
+                      if (wasInSprint && !stillInSprint) {
+                        return { issue, removed: true };
+                      }
+                    }
+                  }
+                }
+                return { issue, removed: false };
+              })
+            );
+            results.filter(r => r.removed).forEach(r => removedIssues.push(r.issue));
+          }
+
+          console.log(`[getRemovedFromSprintIssues] Method 4 found ${removedIssues.length} removed issues via changelog scan`);
+          if (removedIssues.length > 0) return removedIssues;
+        } else {
+          console.log(`[getRemovedFromSprintIssues] Method 4 search failed: ${response4.status}`);
+        }
+      } catch (e4) {
+        console.log(`[getRemovedFromSprintIssues] Method 4 error: ${e4.message}`);
+      }
+    }
+
+    console.log(`[getRemovedFromSprintIssues] All methods failed, returning empty`);
     return [];
   } catch (e) {
-    console.log(`[getRemovedFromSprintIssues] Error: ${e.message}`);
+    console.log(`[getRemovedFromSprintIssues] Fatal error: ${e.message}`);
     return [];
   }
 };
@@ -600,7 +678,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
     });
 
     // ============ REMOVED ISSUES ============
-    const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id);
+    const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id, sprint.name);
     const removedIssues = [];
 
     if (removedFromSprintIssues.length > 0) {
@@ -694,11 +772,20 @@ resolver.define('getBurndownData', async ({ payload }) => {
         runningRemaining = runningRemaining - dayLogged + scopeChange.added - scopeChange.removed;
       }
 
+      // FIX: remaining already includes scope added (line 694: runningRemaining += scopeChange.added)
+      // So for stacked bar chart: remaining bar = runningRemaining - today's added
+      // added bar = today's added
+      // Visual total = remaining bar + added bar = runningRemaining (correct!)
+      const remainingForChart = isPastOrToday
+        ? Math.round((runningRemaining - scopeChange.added) * 10) / 10
+        : null;
+
       dataPoints.push({
         date: dateStr,
         displayDate: formatDate(dateStr),
         ideal: Math.round(ideal * 10) / 10,
-        remaining: isPastOrToday ? Math.round(runningRemaining * 10) / 10 : null,
+        remaining: remainingForChart,
+        totalRemaining: isPastOrToday ? Math.round(runningRemaining * 10) / 10 : null,
         timeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
         dayLogged: isPastOrToday ? Math.round(dayLogged * 10) / 10 : null,
         cumulativeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
@@ -966,7 +1053,7 @@ resolver.define('getScopeChanges', async ({ payload }) => {
     });
 
     // ============ REMOVED ISSUES ============
-    const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id);
+    const removedFromSprintIssues = await getRemovedFromSprintIssues(sprint.id, sprint.name);
     const removed = [];
 
     if (removedFromSprintIssues.length > 0) {

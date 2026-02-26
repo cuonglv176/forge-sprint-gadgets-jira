@@ -114,36 +114,47 @@ const BurndownGadget = () => {
           boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
         }}>
           <p style={{ fontWeight: '600', marginBottom: '8px', color: '#172B4D' }}>{label}</p>
-          {payload.map((entry, index) => {
-            if (entry.value == null || entry.value === 0) return null;
+          {(() => {
+            // Find the data point to get totalRemaining
+            const dataPoint = payload[0]?.payload || {};
+            return payload.map((entry, index) => {
+              if (entry.value == null || entry.value === 0) return null;
 
-            let displayColor = entry.color;
-            let displayName = entry.name;
-            if (entry.dataKey === 'remainingNegative') {
-              displayColor = '#DE350B';
-              displayName = 'Remaining (Over Capacity)';
-            }
+              let displayColor = entry.color;
+              let displayName = entry.name;
+              let displayValue = Math.abs(entry.value);
 
-            return (
-              <div key={index} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginBottom: '4px'
-              }}>
-                <div style={{
-                  width: '10px',
-                  height: '10px',
-                  backgroundColor: displayColor,
-                  borderRadius: '2px'
-                }} />
-                <span style={{ fontSize: '12px', color: '#42526E' }}>
-                  {displayName}: {Math.abs(entry.value).toFixed(1)}h
-                  {entry.value < 0 ? ' (removed)' : ''}
-                </span>
-              </div>
-            );
-          })}
+              if (entry.dataKey === 'remainingNegative') {
+                displayColor = '#DE350B';
+                displayName = 'Remaining (Over Capacity)';
+              }
+
+              // Show totalRemaining (includes added) instead of the split remaining
+              if (entry.dataKey === 'remaining' && dataPoint.totalRemaining != null) {
+                displayValue = dataPoint.totalRemaining;
+              }
+
+              return (
+                <div key={index} style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '4px'
+                }}>
+                  <div style={{
+                    width: '10px',
+                    height: '10px',
+                    backgroundColor: displayColor,
+                    borderRadius: '2px'
+                  }} />
+                  <span style={{ fontSize: '12px', color: '#42526E' }}>
+                    {displayName}: {displayValue.toFixed(1)}h
+                    {entry.value < 0 ? ' (removed)' : ''}
+                  </span>
+                </div>
+              );
+            });
+          })()}
         </div>
       );
     }
@@ -619,7 +630,7 @@ const BurndownGadget = () => {
                   <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#F4F5F7' }}>
                     <td style={{ padding: '2px 4px', border: '1px solid #C1C7D0' }}>{dp.displayDate || dp.date}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>{dp.ideal}</td>
-                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>{dp.remaining ?? '-'}</td>
+                    <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>{dp.totalRemaining ?? dp.remaining ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.dayLogged ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>{dp.cumulativeLogged ?? dp.timeLogged ?? '-'}</td>
                     <td style={{ padding: '2px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#FF991F' }}>{dp.added || '-'}</td>
