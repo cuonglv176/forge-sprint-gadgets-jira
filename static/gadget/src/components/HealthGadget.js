@@ -90,32 +90,100 @@ const HealthGadget = () => {
     setExpandedCategory(expandedCategory === category ? null : category);
   };
 
-  const categoryConfig = {
-    under: { label: 'Underestimated', color: '#DE350B', bgColor: '#FFEBE6', borderColor: '#FF8F73' },
-    normal: { label: 'Normal', color: '#0052CC', bgColor: '#DEEBFF', borderColor: '#B3D4FF' },
-    good: { label: 'Good', color: '#006644', bgColor: '#E3FCEF', borderColor: '#ABF5D1' }
+  // Circle component matching original design
+  const HealthCircle = ({ count, label, color, type }) => {
+    const isExpanded = expandedCategory === type;
+    const size = 90;
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: count > 0 ? 'pointer' : 'default',
+          flex: 1
+        }}
+        onClick={() => count > 0 && toggleCategory(type)}
+      >
+        <div style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: '50%',
+          border: `3px solid ${color}`,
+          background: isExpanded ? `${color}18` : 'transparent',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.2s ease',
+          boxShadow: isExpanded ? `0 0 0 3px ${color}30` : 'none'
+        }}>
+          <div style={{
+            fontSize: '28px',
+            fontWeight: '700',
+            color: color,
+            lineHeight: '1'
+          }}>
+            {count}
+          </div>
+          <div style={{
+            fontSize: '11px',
+            color: '#6B778C',
+            marginTop: '2px'
+          }}>
+            /{total}
+          </div>
+        </div>
+        <div style={{
+          marginTop: '8px',
+          fontSize: '11px',
+          fontWeight: '600',
+          color: '#42526E',
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          textAlign: 'center'
+        }}>
+          {label}
+        </div>
+        {count > 0 && (
+          <div style={{
+            marginTop: '4px',
+            fontSize: '10px',
+            color: isExpanded ? color : '#97A0AF',
+            fontWeight: '500'
+          }}>
+            {isExpanded ? '▲ Hide' : '▼ Details'}
+          </div>
+        )}
+      </div>
+    );
   };
 
-  const IssueTable = ({ issueList, type }) => {
+  // Issue detail table
+  const IssueTable = ({ issueList }) => {
     if (!issueList || issueList.length === 0) return null;
-    const cfg = categoryConfig[type];
     return (
-      <div style={{ marginTop: '8px', marginBottom: '12px' }}>
+      <div style={{
+        marginTop: '12px',
+        border: '1px solid #EBECF0',
+        borderRadius: '4px',
+        overflow: 'hidden'
+      }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
           <thead>
             <tr style={{ background: '#F4F5F7' }}>
-              <th style={{ padding: '4px 6px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Key</th>
-              <th style={{ padding: '4px 6px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Summary</th>
-              <th style={{ padding: '4px 6px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Status</th>
-              <th style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Est.</th>
-              <th style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Remain</th>
-              <th style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Spent</th>
+              <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Key</th>
+              <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Summary</th>
+              <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Status</th>
+              <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Est.</th>
+              <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Remain</th>
+              <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Spent</th>
             </tr>
           </thead>
           <tbody>
             {issueList.map((issue, i) => (
               <tr key={i} style={{ borderBottom: '1px solid #F4F5F7' }}>
-                <td style={{ padding: '4px 6px' }}>
+                <td style={{ padding: '5px 8px' }}>
                   <a
                     href={`/browse/${issue.key}`}
                     onClick={(e) => { e.preventDefault(); router.open(`/browse/${issue.key}`); }}
@@ -124,19 +192,19 @@ const HealthGadget = () => {
                     {issue.key}
                   </a>
                 </td>
-                <td style={{ padding: '4px 6px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#172B4D' }}>
+                <td style={{ padding: '5px 8px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#172B4D' }}>
                   {issue.summary}
                 </td>
-                <td style={{ padding: '4px 6px', color: '#5E6C84', fontSize: '10px' }}>
+                <td style={{ padding: '5px 8px', color: '#5E6C84', fontSize: '10px' }}>
                   {issue.status}
                 </td>
-                <td style={{ padding: '4px 6px', textAlign: 'right', color: '#5E6C84' }}>
+                <td style={{ padding: '5px 8px', textAlign: 'right', color: '#5E6C84' }}>
                   {issue.originalEstimate}h
                 </td>
-                <td style={{ padding: '4px 6px', textAlign: 'right', color: '#172B4D', fontWeight: '500' }}>
+                <td style={{ padding: '5px 8px', textAlign: 'right', color: '#172B4D', fontWeight: '500' }}>
                   {issue.remainingEstimate}h
                 </td>
-                <td style={{ padding: '4px 6px', textAlign: 'right', color: '#5E6C84' }}>
+                <td style={{ padding: '5px 8px', textAlign: 'right', color: '#5E6C84' }}>
                   {issue.timeSpent}h
                 </td>
               </tr>
@@ -147,44 +215,9 @@ const HealthGadget = () => {
     );
   };
 
-  const HealthCard = ({ count, type }) => {
-    const cfg = categoryConfig[type];
-    const isExpanded = expandedCategory === type;
-    const issueList = issues?.[type] || [];
-    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-
-    return (
-      <div style={{ marginBottom: '2px' }}>
-        <div
-          onClick={() => count > 0 && toggleCategory(type)}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 14px', borderRadius: '6px',
-            background: isExpanded ? cfg.bgColor : '#FAFBFC',
-            border: `1px solid ${isExpanded ? cfg.borderColor : '#EBECF0'}`,
-            cursor: count > 0 ? 'pointer' : 'default',
-            transition: 'all 0.15s ease'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{
-              width: '8px', height: '8px', borderRadius: '50%',
-              background: cfg.color, opacity: 0.8
-            }} />
-            <span style={{ fontSize: '13px', color: '#172B4D', fontWeight: '500' }}>{cfg.label}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '13px', fontWeight: '600', color: '#172B4D' }}>{count}</span>
-            <span style={{ fontSize: '11px', color: '#5E6C84' }}>({pct}%)</span>
-            {count > 0 && (
-              <span style={{ fontSize: '10px', color: '#5E6C84', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▼</span>
-            )}
-          </div>
-        </div>
-        {isExpanded && <IssueTable issueList={issueList} type={type} />}
-      </div>
-    );
-  };
+  const underColor = '#F6C244';
+  const normalColor = '#4C9AFF';
+  const goodColor = '#57D9A3';
 
   return (
     <GadgetWrapper 
@@ -193,28 +226,93 @@ const HealthGadget = () => {
       onConfigChange={loadConfig}
     >
       <div className="gadget">
-        <div style={{ marginBottom: '16px' }}>
-          <div style={{ fontSize: '14px', fontWeight: '600', color: '#172B4D' }}>Sprint Health</div>
-          <div style={{ fontSize: '12px', color: '#5E6C84', marginTop: '2px' }}>{sprintName}</div>
+        {/* Header */}
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>Sprint Health</div>
+          <div style={{ fontSize: '12px', color: '#6B778C', marginTop: '2px' }}>{sprintName}</div>
         </div>
 
-        {/* Summary bar */}
-        <div style={{ marginBottom: '16px' }}>
-          <div style={{ display: 'flex', height: '6px', borderRadius: '3px', overflow: 'hidden', background: '#F4F5F7' }}>
-            <div style={{ width: `${(counts.under / total) * 100}%`, background: '#DE350B', transition: 'width 0.3s' }} />
-            <div style={{ width: `${(counts.normal / total) * 100}%`, background: '#0052CC', transition: 'width 0.3s' }} />
-            <div style={{ width: `${(counts.good / total) * 100}%`, background: '#006644', transition: 'width 0.3s' }} />
+        {/* Three circles */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-around',
+          alignItems: 'flex-start',
+          marginBottom: '24px',
+          padding: '0 8px'
+        }}>
+          <HealthCircle count={counts.under} label="Underestimated" color={underColor} type="under" />
+          <HealthCircle count={counts.normal} label="Normal" color={normalColor} type="normal" />
+          <HealthCircle count={counts.good} label="Good" color={goodColor} type="good" />
+        </div>
+
+        {/* Expanded detail table */}
+        {expandedCategory && issues?.[expandedCategory] && (
+          <IssueTable issueList={issues[expandedCategory]} />
+        )}
+
+        {/* Overall Progress bar */}
+        <div style={{ marginTop: expandedCategory ? '16px' : '0' }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '6px'
+          }}>
+            <span style={{ fontSize: '12px', color: '#6B778C' }}>Overall Progress</span>
+            <span style={{ fontSize: '12px', fontWeight: '600', color: '#42526E' }}>{total} Total Items</span>
           </div>
-          <div style={{ fontSize: '11px', color: '#5E6C84', marginTop: '4px', textAlign: 'right' }}>
-            {total} items
+          <div style={{
+            display: 'flex',
+            height: '10px',
+            borderRadius: '5px',
+            overflow: 'hidden',
+            background: '#F4F5F7'
+          }}>
+            {counts.under > 0 && (
+              <div style={{
+                width: `${(counts.under / total) * 100}%`,
+                background: underColor,
+                transition: 'width 0.3s ease'
+              }} />
+            )}
+            {counts.normal > 0 && (
+              <div style={{
+                width: `${(counts.normal / total) * 100}%`,
+                background: normalColor,
+                transition: 'width 0.3s ease'
+              }} />
+            )}
+            {counts.good > 0 && (
+              <div style={{
+                width: `${(counts.good / total) * 100}%`,
+                background: goodColor,
+                transition: 'width 0.3s ease'
+              }} />
+            )}
           </div>
         </div>
 
-        {/* Category cards */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <HealthCard count={counts.under} type="under" />
-          <HealthCard count={counts.normal} type="normal" />
-          <HealthCard count={counts.good} type="good" />
+        {/* Legend */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: '20px',
+          marginTop: '12px',
+          fontSize: '12px',
+          color: '#42526E'
+        }}>
+          <span>
+            <span style={{ color: underColor, fontSize: '14px', marginRight: '4px' }}>●</span>
+            Under
+          </span>
+          <span>
+            <span style={{ color: normalColor, fontSize: '14px', marginRight: '4px' }}>●</span>
+            Normal
+          </span>
+          <span>
+            <span style={{ color: goodColor, fontSize: '14px', marginRight: '4px' }}>●</span>
+            Good
+          </span>
         </div>
       </div>
     </GadgetWrapper>
