@@ -6,6 +6,7 @@ const resolver = new Resolver();
 // ============ CONSTANTS ============
 const WORKING_DAYS_DEFAULT = 10;
 const HOURS_PER_DAY = 8;
+const JIRA_BASE_URL = 'https://jeisysvn.atlassian.net';
 
 // ============ HELPER FUNCTIONS ============
 const isWorkingDay = (date) => {
@@ -114,6 +115,88 @@ const getSprintIssues = async (sprintId) => {
   } while (nextPageToken);
 
   return allIssues;
+};
+
+// ============ CHANGELOG API ============
+// Get changelog for a single issue to find Sprint field changes
+const getIssueChangelog = async (issueKey) => {
+  try {
+    let allHistories = [];
+    let startAt = 0;
+    const maxResults = 100;
+
+    do {
+      const response = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}/changelog?startAt=${startAt}&maxResults=${maxResults}`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      allHistories = allHistories.concat(data.values || []);
+      if (allHistories.length >= (data.total || 0)) break;
+      startAt += maxResults;
+    } while (true);
+
+    return allHistories;
+  } catch (e) {
+    return [];
+  }
+};
+
+// Analyze sprint changelog for a single issue
+// Returns: { addedToSprint: Date|null, removedFromSprint: Date|null }
+const analyzeSprintChangelog = (histories, sprintName, sprintId) => {
+  let addedDate = null;
+  let removedDate = null;
+  
+  // Sort histories by date ascending
+  const sorted = [...histories].sort((a, b) => new Date(a.created) - new Date(b.created));
+  
+  for (const history of sorted) {
+    for (const item of (history.items || [])) {
+      if (item.field === 'Sprint') {
+        const fromStr = item.fromString || '';
+        const toStr = item.toString || '';
+        const fromId = item.from || '';
+        const toId = item.to || '';
+        
+        // Check if sprint was ADDED (not in "from", but in "to")
+        const wasInFrom = fromStr.includes(sprintName) || fromId.includes(String(sprintId));
+        const isInTo = toStr.includes(sprintName) || toId.includes(String(sprintId));
+        
+        if (!wasInFrom && isInTo) {
+          addedDate = new Date(history.created);
+        }
+        
+        // Check if sprint was REMOVED (in "from", but not in "to")
+        if (wasInFrom && !isInTo) {
+          removedDate = new Date(history.created);
+          addedDate = null; // Reset added since it was removed
+        }
+      }
+    }
+  }
+  
+  return { addedDate, removedDate };
+};
+
+// Get all changelogs for multiple issues (batched)
+const getAllChangelogs = async (issues) => {
+  const BATCH_SIZE = 10;
+  const results = {};
+
+  for (let i = 0; i < issues.length; i += BATCH_SIZE) {
+    const batch = issues.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (issue) => {
+        const histories = await getIssueChangelog(issue.key);
+        return { key: issue.key, histories };
+      })
+    );
+    batchResults.forEach(r => { results[r.key] = r.histories; });
+  }
+
+  return results;
 };
 
 // ============ WORKLOG API ============
@@ -253,7 +336,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
         return !doneStatuses.some(s => status.includes(s));
       }).length;
       
-      // If baseline has less than 30% of current active issues, it's likely corrupted
       if (baseline.issues.length < currentActiveCount * 0.3 && baseline.issues.length < 10) {
         console.log(`Baseline corrupted: ${baseline.issues.length} vs ${currentActiveCount} active issues. Recreating...`);
         await deleteSprintBaseline(sprint.id);
@@ -302,26 +384,119 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const currentRemaining = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timeestimate), 0);
     const totalSpent = issues.reduce((sum, issue) => sum + secondsToHours(issue.fields.timespent), 0);
     
-    // Identify scope changes
-    const baselineKeys = new Set(filteredBaseline?.issues?.map(i => i.key) || []);
+    // ============ CHANGELOG-BASED SCOPE CHANGES ============
+    // Fetch changelogs for all issues to detect sprint add/remove dates
+    const allChangelogs = await getAllChangelogs(issues);
+    
+    const sprintStartDate = new Date(sprint.startDate);
+    sprintStartDate.setHours(0, 0, 0, 0);
+    
+    const addedIssues = [];
+    const removedIssues = [];
+    const scopeChangesByDate = {};
+    
+    issues.forEach(issue => {
+      const histories = allChangelogs[issue.key] || [];
+      const { addedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
+      
+      // Determine when this issue was added to the sprint
+      let issueAddedDate = null;
+      
+      if (addedDate) {
+        // Has explicit sprint changelog - use that date
+        const addedDay = new Date(addedDate);
+        addedDay.setHours(0, 0, 0, 0);
+        
+        if (addedDay > sprintStartDate) {
+          issueAddedDate = addedDay;
+        }
+      } else {
+        // No sprint changelog - check if created after sprint start
+        const createdDate = new Date(issue.fields.created);
+        createdDate.setHours(0, 0, 0, 0);
+        
+        if (createdDate > sprintStartDate) {
+          issueAddedDate = createdDate;
+        }
+      }
+      
+      if (issueAddedDate) {
+        const dateStr = issueAddedDate.toISOString().split('T')[0];
+        const oe = secondsToHours(issue.fields.timeoriginalestimate);
+        
+        addedIssues.push({
+          key: issue.key,
+          summary: issue.fields.summary,
+          addedDate: dateStr,
+          originalEstimate: oe
+        });
+        
+        if (!scopeChangesByDate[dateStr]) {
+          scopeChangesByDate[dateStr] = { added: 0, removed: 0 };
+        }
+        scopeChangesByDate[dateStr].added += oe;
+      }
+    });
+    
+    // Check baseline for removed issues (in baseline but no longer in sprint)
     const currentKeys = new Set(issues.map(i => i.key));
+    const baselineRemovedIssues = filteredBaseline?.issues?.filter(b => !currentKeys.has(b.key)) || [];
     
-    const addedIssues = issues.filter(i => !baselineKeys.has(i.key));
-    const removedIssues = filteredBaseline?.issues?.filter(b => !currentKeys.has(b.key)) || [];
+    if (baselineRemovedIssues.length > 0) {
+      // For removed issues, we need to check when they were removed
+      // Since they're not in current sprint, we fetch their changelogs separately
+      for (const removedItem of baselineRemovedIssues) {
+        try {
+          const histories = await getIssueChangelog(removedItem.key);
+          const { removedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
+          
+          let removeDateStr;
+          if (removedDate) {
+            removeDateStr = removedDate.toISOString().split('T')[0];
+          } else {
+            // Fallback: use today or sprint end
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            removeDateStr = today <= endDate 
+              ? today.toISOString().split('T')[0]
+              : endDate.toISOString().split('T')[0];
+          }
+          
+          removedIssues.push({
+            key: removedItem.key,
+            summary: removedItem.summary,
+            removedDate: removeDateStr,
+            originalEstimate: removedItem.originalEstimate || 0
+          });
+          
+          if (!scopeChangesByDate[removeDateStr]) {
+            scopeChangesByDate[removeDateStr] = { added: 0, removed: 0 };
+          }
+          scopeChangesByDate[removeDateStr].removed += (removedItem.originalEstimate || 0);
+        } catch (e) {
+          // Fallback for removed issues we can't fetch changelog for
+          const today = new Date();
+          const removeDateStr = today.toISOString().split('T')[0];
+          if (!scopeChangesByDate[removeDateStr]) {
+            scopeChangesByDate[removeDateStr] = { added: 0, removed: 0 };
+          }
+          scopeChangesByDate[removeDateStr].removed += (removedItem.originalEstimate || 0);
+          removedIssues.push({
+            key: removedItem.key,
+            summary: removedItem.summary,
+            removedDate: removeDateStr,
+            originalEstimate: removedItem.originalEstimate || 0
+          });
+        }
+      }
+    }
     
-    const scopeAddedTotal = addedIssues.reduce((sum, issue) => 
-      sum + secondsToHours(issue.fields.timeoriginalestimate), 0
-    );
-    
-    const scopeRemovedTotal = removedIssues.reduce((sum, item) => 
-      sum + (item.originalEstimate || 0), 0
-    );
+    const scopeAddedTotal = addedIssues.reduce((sum, i) => sum + (i.originalEstimate || 0), 0);
+    const scopeRemovedTotal = removedIssues.reduce((sum, i) => sum + (i.originalEstimate || 0), 0);
     
     // ============ WORKLOG-BASED REMAINING ============
-    // Fetch all worklogs for all issues
     const allWorklogs = await getAllWorklogs(issues);
     
-    // Group worklogs by date
     const worklogByDate = {};
     allWorklogs.forEach(wl => {
       const dateStr = wl.started ? wl.started.split('T')[0] : null;
@@ -331,30 +506,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
       }
     });
     
-    // Track scope changes by date
-    const scopeChangesByDate = {};
-    addedIssues.forEach(issue => {
-      const addedDate = new Date(issue.fields.created).toISOString().split('T')[0];
-      if (!scopeChangesByDate[addedDate]) {
-        scopeChangesByDate[addedDate] = { added: 0, removed: 0 };
-      }
-      scopeChangesByDate[addedDate].added += secondsToHours(issue.fields.timeoriginalestimate);
-    });
-    
-    if (removedIssues.length > 0) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const removedDate = today <= endDate 
-        ? today.toISOString().split('T')[0]
-        : endDate.toISOString().split('T')[0];
-      if (!scopeChangesByDate[removedDate]) {
-        scopeChangesByDate[removedDate] = { added: 0, removed: 0 };
-      }
-      removedIssues.forEach(item => {
-        scopeChangesByDate[removedDate].removed += (item.originalEstimate || 0);
-      });
-    }
-    
     // Generate data points
     const dataPoints = [];
     const current = new Date(startDate);
@@ -363,11 +514,10 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Remaining calculation: start from totalOriginalEstimate, subtract logged, add scope added, subtract scope removed
     let runningRemaining = totalOriginalEstimate;
     let cumulativeLogged = 0;
     
-    // Start Sprint data point (before first day)
+    // Start Sprint data point
     dataPoints.push({
       date: 'start',
       displayDate: 'Start Sprint',
@@ -380,7 +530,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
       removed: 0
     });
     
-    // Generate data points for ALL calendar days
     while (current <= endDate) {
       if (isWorkingDay(current) && current > startDate) {
         workingDayCount++;
@@ -397,7 +546,6 @@ resolver.define('getBurndownData', async ({ payload }) => {
       
       if (isPastOrToday) {
         cumulativeLogged += dayLogged;
-        // Remaining = previous remaining - dayLogged + added - removed
         runningRemaining = runningRemaining - dayLogged + scopeChange.added - scopeChange.removed;
       }
       
@@ -447,7 +595,8 @@ resolver.define('getBurndownData', async ({ payload }) => {
         addedIssuesCount: addedIssues.length,
         removedIssuesCount: removedIssues.length,
         issueDetails,
-        baselineIssueCount: filteredBaseline?.issues?.length || 0
+        baselineIssueCount: filteredBaseline?.issues?.length || 0,
+        jiraBaseUrl: JIRA_BASE_URL
       }
     };
   } catch (error) {
@@ -550,7 +699,6 @@ resolver.define('getAtRiskItems', async ({ payload }) => {
       }
     });
     
-    // Sort by status: In Progress -> To Do -> Done
     sortByStatus(atRiskItems);
     
     return { success: true, data: { items: atRiskItems, total: atRiskItems.length, sprintName: sprint.name } };
@@ -568,46 +716,113 @@ resolver.define('getScopeChanges', async ({ payload }) => {
     const sprint = await getActiveSprint(boardId);
     if (!sprint) return { success: false, error: 'No active sprint found' };
     
-    let issues = await getSprintIssues(sprint.id);
+    let allIssues = await getSprintIssues(sprint.id);
     if (assignee && assignee !== 'All') {
-      issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
+      allIssues = allIssues.filter(i => i.fields.assignee?.displayName === assignee);
     }
     
-    // Get baseline to detect scope changes properly
-    const baseline = await getSprintBaseline(sprint.id);
-    const baselineKeys = new Set(baseline?.issues?.map(i => i.key) || []);
+    const sprintStartDate = new Date(sprint.startDate);
+    sprintStartDate.setHours(0, 0, 0, 0);
+    
+    // Fetch changelogs for all current issues
+    const allChangelogs = await getAllChangelogs(allIssues);
     
     const added = [];
-    issues.forEach(issue => {
-      if (!baselineKeys.has(issue.key)) {
+    
+    allIssues.forEach(issue => {
+      const histories = allChangelogs[issue.key] || [];
+      const { addedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
+      
+      let issueAddedDate = null;
+      let changeSource = '';
+      
+      if (addedDate) {
+        const addedDay = new Date(addedDate);
+        addedDay.setHours(0, 0, 0, 0);
+        
+        if (addedDay > sprintStartDate) {
+          issueAddedDate = addedDay;
+          changeSource = 'sprint_changelog';
+        }
+      } else {
+        // No sprint changelog - check if created after sprint start
+        const createdDate = new Date(issue.fields.created);
+        createdDate.setHours(0, 0, 0, 0);
+        
+        if (createdDate > sprintStartDate) {
+          issueAddedDate = createdDate;
+          changeSource = 'created_after_start';
+        }
+      }
+      
+      if (issueAddedDate) {
         added.push({
-          key: issue.key, summary: issue.fields.summary,
+          key: issue.key,
+          summary: issue.fields.summary,
           assignee: issue.fields.assignee?.displayName || 'Unassigned',
           priority: issue.fields.priority?.name,
           status: issue.fields.status?.name,
           changeType: 'ADDED',
+          changeDate: issueAddedDate.toISOString(),
+          changeSource,
           originalEstimate: secondsToHours(issue.fields.timeoriginalestimate)
         });
       }
     });
     
-    // Detect removed issues (in baseline but not in current sprint)
-    const currentKeys = new Set(issues.map(i => i.key));
-    const removed = (baseline?.issues || []).filter(b => !currentKeys.has(b.key)).map(b => ({
-      key: b.key, summary: b.summary || b.key,
-      assignee: b.assignee || 'Unassigned',
-      priority: null,
-      status: b.status || 'Removed',
-      changeType: 'REMOVED',
-      originalEstimate: b.originalEstimate || 0
-    }));
+    // Detect removed issues using baseline
+    const baseline = await getSprintBaseline(sprint.id);
+    const currentKeys = new Set(allIssues.map(i => i.key));
+    const baselineRemovedIssues = (baseline?.issues || []).filter(b => !currentKeys.has(b.key));
     
-    // Sort by status
+    const removed = [];
+    
+    for (const removedItem of baselineRemovedIssues) {
+      try {
+        const histories = await getIssueChangelog(removedItem.key);
+        const { removedDate } = analyzeSprintChangelog(histories, sprint.name, sprint.id);
+        
+        removed.push({
+          key: removedItem.key,
+          summary: removedItem.summary || removedItem.key,
+          assignee: removedItem.assignee || 'Unassigned',
+          priority: null,
+          status: 'Removed',
+          changeType: 'REMOVED',
+          changeDate: removedDate ? removedDate.toISOString() : new Date().toISOString(),
+          changeSource: removedDate ? 'sprint_changelog' : 'baseline_diff',
+          originalEstimate: removedItem.originalEstimate || 0
+        });
+      } catch (e) {
+        removed.push({
+          key: removedItem.key,
+          summary: removedItem.summary || removedItem.key,
+          assignee: removedItem.assignee || 'Unassigned',
+          priority: null,
+          status: 'Removed',
+          changeType: 'REMOVED',
+          changeDate: new Date().toISOString(),
+          changeSource: 'baseline_diff',
+          originalEstimate: removedItem.originalEstimate || 0
+        });
+      }
+    }
+    
+    // Sort added by status
     sortByStatus(added);
     
     return {
       success: true,
-      data: { added, removed, priorityChanged: [], totalAdded: added.length, totalRemoved: removed.length, totalPriorityChanged: 0, sprintName: sprint.name }
+      data: {
+        added,
+        removed,
+        priorityChanged: [],
+        totalAdded: added.length,
+        totalRemoved: removed.length,
+        totalPriorityChanged: 0,
+        sprintName: sprint.name,
+        sprintStartDate: sprint.startDate
+      }
     };
   } catch (error) {
     return { success: false, error: error.message };
@@ -720,7 +935,6 @@ resolver.define('getReleaseData', async ({ payload }) => {
     });
     
     const releases = Array.from(releaseMap.values()).map(r => {
-      // Sort issues within each release by status
       sortByStatus(r.issues);
       return {
         ...r,

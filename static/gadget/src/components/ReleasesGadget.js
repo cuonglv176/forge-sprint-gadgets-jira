@@ -306,7 +306,7 @@ const ReleasesGadget = () => {
                           }}>
                             <td>
                               <a
-                                href={`/browse/${issue.key}`}
+                                href={`https://jeisysvn.atlassian.net/browse/${issue.key}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="issue-key"

@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@forge/bridge';
 import GadgetWrapper from './GadgetWrapper';
 
+const JIRA_BASE_URL = 'https://jeisysvn.atlassian.net/browse/';
+
 const ChangesGadget = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -58,14 +60,20 @@ const ChangesGadget = () => {
   const getChangeBadge = (type) => {
     switch (type) {
       case 'ADDED':
-        return <span className="badge badge-change-added">➕ Added</span>;
+        return <span className="badge badge-change-added">+ Added</span>;
       case 'REMOVED':
-        return <span className="badge badge-change-removed">➖ Removed</span>;
+        return <span className="badge badge-change-removed">- Removed</span>;
       case 'PRIORITY':
-        return <span className="badge badge-change-priority">🔄 Priority</span>;
+        return <span className="badge badge-change-priority">Priority</span>;
       default:
         return null;
     }
+  };
+
+  const formatChangeDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
   };
 
   if (!config.boardId && !loading) {
@@ -90,7 +98,7 @@ const ChangesGadget = () => {
   }
 
   if (error) {
-    return <div className="error">⚠️ {error}</div>;
+    return <div className="error">{error}</div>;
   }
 
   if (!data) return null;
@@ -152,17 +160,17 @@ const ChangesGadget = () => {
               <tr>
                 <th>Work</th>
                 <th>Assignee</th>
-                <th>Status</th>
+                <th>Date</th>
                 <th style={{ textAlign: 'right' }}>Est.</th>
                 <th>Change</th>
               </tr>
             </thead>
             <tbody>
-              {allChanges.slice(0, 10).map((item, index) => (
+              {allChanges.slice(0, 15).map((item, index) => (
                 <tr key={`${item.key}-${index}`}>
                   <td>
                     <a
-                      href={`/browse/${item.key}`}
+                      href={`${JIRA_BASE_URL}${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="issue-key"
@@ -181,10 +189,8 @@ const ChangesGadget = () => {
                     </div>
                   </td>
                   <td style={{ fontSize: '11px' }}>{item.assignee}</td>
-                  <td>
-                    <span className="badge badge-status-todo" style={{ fontSize: '10px' }}>
-                      {item.status}
-                    </span>
+                  <td style={{ fontSize: '10px', color: '#6b778c', whiteSpace: 'nowrap' }}>
+                    {formatChangeDate(item.changeDate)}
                   </td>
                   <td style={{ textAlign: 'right', fontSize: '11px' }}>
                     {item.originalEstimate}h
@@ -194,9 +200,9 @@ const ChangesGadget = () => {
               ))}
             </tbody>
           </table>
-          {allChanges.length > 10 && (
+          {allChanges.length > 15 && (
             <p style={{ textAlign: 'center', fontSize: '11px', color: '#6b778c', marginTop: '8px' }}>
-              +{allChanges.length - 10} more changes
+              +{allChanges.length - 15} more changes
             </p>
           )}
         </div>

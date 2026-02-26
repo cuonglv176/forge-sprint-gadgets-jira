@@ -81,6 +81,92 @@ const PriorityGadget = () => {
     return <span className="badge badge-status-todo">{status}</span>;
   };
 
+  // Jira-style Time Tracking Progress Bar
+  const TimeTrackingBar = ({ originalEstimate, timeSpent, remainingEstimate }) => {
+    const oe = originalEstimate || 0;
+    const spent = timeSpent || 0;
+    const remaining = remainingEstimate || 0;
+    const total = spent + remaining;
+
+    // No estimate at all
+    if (oe === 0 && spent === 0 && remaining === 0) {
+      return (
+        <div style={{ fontSize: '10px', color: '#97A0AF', textAlign: 'center' }}>
+          No estimate
+        </div>
+      );
+    }
+
+    const maxBar = Math.max(oe, total);
+    const spentPct = maxBar > 0 ? (spent / maxBar) * 100 : 0;
+    const remainPct = maxBar > 0 ? (remaining / maxBar) * 100 : 0;
+    const isOverEstimate = total > oe && oe > 0;
+    const overAmount = isOverEstimate ? total - oe : 0;
+    const overPct = maxBar > 0 ? (overAmount / maxBar) * 100 : 0;
+
+    // Colors: Blue = logged, Light blue = remaining, Red = over estimate
+    const spentColor = isOverEstimate ? '#DE350B' : '#0065FF';
+    const remainColor = '#DEEBFF';
+
+    return (
+      <div style={{ minWidth: '120px' }}>
+        {/* Progress bar */}
+        <div style={{
+          display: 'flex',
+          height: '6px',
+          borderRadius: '3px',
+          overflow: 'hidden',
+          background: '#F4F5F7',
+          marginBottom: '3px'
+        }}>
+          {spentPct > 0 && (
+            <div style={{
+              width: `${Math.min(spentPct, 100)}%`,
+              background: spentColor,
+              borderRadius: spentPct >= 100 ? '3px' : '3px 0 0 3px',
+              transition: 'width 0.3s ease'
+            }} />
+          )}
+          {remainPct > 0 && !isOverEstimate && (
+            <div style={{
+              width: `${remainPct}%`,
+              background: remainColor,
+              transition: 'width 0.3s ease'
+            }} />
+          )}
+        </div>
+        {/* Labels */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: '9px',
+          color: '#6B778C',
+          lineHeight: '1.2'
+        }}>
+          <span style={{ color: spentColor, fontWeight: '600' }}>
+            {spent}h logged
+          </span>
+          <span>
+            {remaining}h remain
+          </span>
+        </div>
+        {isOverEstimate && (
+          <div style={{
+            fontSize: '9px',
+            color: '#DE350B',
+            fontWeight: '600',
+            textAlign: 'right'
+          }}>
+            +{overAmount.toFixed(1)}h over
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Jira base URL
+  const jiraBaseUrl = 'https://jeisysvn.atlassian.net/browse/';
+
   if (!config.boardId && !loading) {
     return (
       <GadgetWrapper 
@@ -103,7 +189,7 @@ const PriorityGadget = () => {
   }
 
   if (error) {
-    return <div className="error">⚠️ {error}</div>;
+    return <div className="error">{error}</div>;
   }
 
   if (!data) return null;
@@ -289,8 +375,7 @@ const PriorityGadget = () => {
                 <th>Assignee</th>
                 <th>Priority</th>
                 <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Original</th>
-                <th style={{ textAlign: 'right' }}>Remaining</th>
+                <th style={{ minWidth: '130px' }}>Time Tracking</th>
               </tr>
             </thead>
             <tbody>
@@ -298,7 +383,7 @@ const PriorityGadget = () => {
                 <tr key={item.key}>
                   <td>
                     <a
-                      href={`/browse/${item.key}`}
+                      href={`${jiraBaseUrl}${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="issue-key"
@@ -319,11 +404,12 @@ const PriorityGadget = () => {
                   <td style={{ fontSize: '11px' }}>{item.assignee}</td>
                   <td>{getPriorityBadge(item.priority)}</td>
                   <td>{getStatusBadge(item.status)}</td>
-                  <td style={{ textAlign: 'right', fontSize: '11px' }}>
-                    {item.originalEstimate}h
-                  </td>
-                  <td style={{ textAlign: 'right', fontSize: '11px' }}>
-                    {item.remainingEstimate}h
+                  <td>
+                    <TimeTrackingBar
+                      originalEstimate={item.originalEstimate}
+                      timeSpent={item.timeSpent}
+                      remainingEstimate={item.remainingEstimate}
+                    />
                   </td>
                 </tr>
               ))}

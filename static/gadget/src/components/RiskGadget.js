@@ -149,7 +149,7 @@ const RiskGadget = () => {
                 <tr key={item.key}>
                   <td>
                     <a
-                      href={`/browse/${item.key}`}
+                      href={`https://jeisysvn.atlassian.net/browse/${item.key}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="issue-key"
