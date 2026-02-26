@@ -959,7 +959,8 @@ resolver.define('getScopeChanges', async ({ payload }) => {
           changeType: 'ADDED',
           changeDate: issueAddedDate.toISOString(),
           changeSource,
-          originalEstimate: secondsToHours(issue.fields.timeoriginalestimate)
+          originalEstimate: secondsToHours(issue.fields.timeoriginalestimate),
+          remainingEstimate: secondsToHours(issue.fields.timeestimate)
         });
       }
     });
@@ -984,7 +985,8 @@ resolver.define('getScopeChanges', async ({ payload }) => {
           changeType: 'REMOVED',
           changeDate: removedDate ? removedDate.toISOString() : new Date().toISOString(),
           changeSource: removedDate ? 'sprint_changelog' : 'jql_was_sprint',
-          originalEstimate: secondsToHours(removedIssue.fields.timeoriginalestimate)
+          originalEstimate: secondsToHours(removedIssue.fields.timeoriginalestimate),
+          remainingEstimate: secondsToHours(removedIssue.fields.timeestimate)
         });
       }
     }

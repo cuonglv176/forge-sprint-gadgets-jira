@@ -161,6 +161,7 @@ const ChangesGadget = () => {
                 <th>Work</th>
                 <th>Assignee</th>
                 <th>Date</th>
+                <th style={{ textAlign: 'right' }}>Remain</th>
                 <th style={{ textAlign: 'right' }}>Est.</th>
                 <th>Change</th>
               </tr>
@@ -194,7 +195,10 @@ const ChangesGadget = () => {
                   <td style={{ fontSize: '10px', color: '#6b778c', whiteSpace: 'nowrap' }}>
                     {formatChangeDate(item.changeDate)}
                   </td>
-                  <td style={{ textAlign: 'right', fontSize: '11px' }}>
+                  <td style={{ textAlign: 'right', fontSize: '11px', fontWeight: '600', color: item.changeType === 'ADDED' ? '#006644' : item.changeType === 'REMOVED' ? '#bf2600' : '#172b4d' }}>
+                    {item.remainingEstimate != null ? `${item.remainingEstimate}h` : '-'}
+                  </td>
+                  <td style={{ textAlign: 'right', fontSize: '11px', color: '#6b778c' }}>
                     {item.originalEstimate}h
                   </td>
                   <td>{getChangeBadge(item.changeType)}</td>
