@@ -1,0 +1,92 @@
+modules:
+  jira:dashboardGadget:
+    - key: sprint-burndown-gadget
+      resource: main
+      resolver:
+        function: resolver
+      edit:
+        resource: main
+      title: Sprint Burndown Chart v2.1
+      description: Advanced burndown with scope tracking
+      thumbnail: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+
+    - key: sprint-health-gadget
+      resource: main
+      resolver:
+        function: resolver
+      edit:
+        resource: main
+      title: Sprint Health
+      description: Sprint health metrics - Underestimated, Normal, Good
+      thumbnail: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+
+    - key: at-risk-gadget
+      resource: main
+      resolver:
+        function: resolver
+      edit:
+        resource: main
+      title: At Risk Items
+      description: Tasks with Time Box or Deadline exceeded
+      thumbnail: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+
+    - key: scope-changes-gadget
+      resource: main
+      resolver:
+        function: resolver
+      edit:
+        resource: main
+      title: Scope Changes
+      description: Sprint scope changes - Added, Removed, Priority Changed
+      thumbnail: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+
+    - key: high-priority-gadget
+      resource: main
+      resolver:
+        function: resolver
+      edit:
+        resource: main
+      title: High Priority Items
+      description: Highest and High priority items
+      thumbnail: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+
+    - key: releases-gadget
+      resource: main
+      resolver:
+        function: resolver
+      edit:
+        resource: main
+      title: Sprint Releases
+      description: Track delivery progress of planned releases
+      thumbnail: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+
+  jira:globalPage:
+    - key: sprint-gadgets-settings
+      resource: main
+      title: Sprint Gadgets Settings
+      description: Configure Sprint Gadgets
+
+  function:
+    - key: resolver
+      handler: index.handler
+
+resources:
+  - key: main
+    path: static/gadget/build
+
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - storage:app
+    - read:board-scope:jira-software
+    - read:project:jira
+    - read:sprint:jira-software
+  content:
+    styles:
+      - 'unsafe-inline'
+
+app:
+  runtime:
+    name: nodejs20.x
+  id: ari:cloud:ecosystem::app/21d96009-2035-47e3-b060-347c35e53c4d

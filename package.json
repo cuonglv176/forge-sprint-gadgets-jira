@@ -1,0 +1,21 @@
+{
+  "name": "forge-sprint-gadgets",
+  "version": "2.1.0",
+  "main": "src/resolvers/index.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "lint": "./node_modules/.bin/eslint src/**/* || npm run lint:fix",
+    "lint:fix": "./node_modules/.bin/eslint src/**/* --fix",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@forge/api": "^5.0.0",
+    "@forge/resolver": "^1.5.0",
+    "@forge/ui": "^1.11.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0",
+    "eslint-plugin-react-hooks": "^4.0.0"
+  }
+}

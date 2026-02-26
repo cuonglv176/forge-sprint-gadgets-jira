@@ -1,0 +1,244 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { invoke } from '@forge/bridge';
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from 'recharts';
+
+const BurndownGadget = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [config, setConfig] = useState({ boardId: null, teamSize: 10 });
+  const [selectedMember, setSelectedMember] = useState('All');
+
+  // Load configuration
+  const loadConfig = useCallback(async () => {
+    try {
+      const savedConfig = await invoke('getConfig');
+      if (savedConfig?.boardId) {
+        setConfig(savedConfig);
+      }
+    } catch (err) {
+      console.error('Error loading config:', err);
+    }
+  }, []);
+
+  // Load burndown data
+  const loadData = useCallback(async () => {
+    if (!config.boardId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await invoke('getBurndownData', {
+        boardId: config.boardId,
+        assignee: selectedMember,
+        teamSize: config.teamSize
+      });
+
+      if (result.success) {
+        setData(result.data);
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [config.boardId, config.teamSize, selectedMember]);
+
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+
+  useEffect(() => {
+    if (config.boardId) {
+      loadData();
+    }
+  }, [config.boardId, selectedMember, loadData]);
+
+  // Custom tooltip
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div style={{
+          background: 'white',
+          border: '1px solid #dfe1e6',
+          borderRadius: '3px',
+          padding: '12px',
+          boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
+        }}>
+          <p style={{ fontWeight: '600', marginBottom: '8px' }}>{label}</p>
+          {payload.map((entry, index) => (
+            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <div style={{
+                width: '10px',
+                height: '10px',
+                backgroundColor: entry.color,
+                borderRadius: '2px'
+              }} />
+              <span style={{ fontSize: '12px' }}>
+                {entry.name}: {entry.value != null ? `${Math.abs(entry.value).toFixed(1)}h` : '-'}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // Not configured
+  if (!config.boardId && !loading) {
+    return (
+      <div className="configure-message">
+        <p>⚙️ Please configure this gadget</p>
+        <p style={{ fontSize: '12px', marginTop: '8px' }}>
+          Click the edit button to select a Scrum board
+        </p>
+      </div>
+    );
+  }
+
+  // Loading
+  if (loading) {
+    return (
+      <div className="loading">
+        <div className="spinner"></div>
+        <p style={{ marginTop: '12px' }}>Loading burndown data...</p>
+      </div>
+    );
+  }
+
+  // Error
+  if (error) {
+    return (
+      <div className="error">
+        <p>⚠️ {error}</p>
+        <button className="btn btn-secondary" style={{ marginTop: '12px' }} onClick={loadData}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const { dataPoints, sprintName, maxCapacity, workingDays, teamSize, assignees } = data;
+
+  return (
+    <div className="gadget">
+      {/* Header */}
+      <div className="gadget-header">
+        <div>
+          <div className="gadget-title">Burndown Chart</div>
+          <div className="gadget-subtitle">{sprintName}</div>
+        </div>
+        <select
+          className="select"
+          value={selectedMember}
+          onChange={(e) => setSelectedMember(e.target.value)}
+        >
+          <option value="All">All ({assignees?.length || 0})</option>
+          {assignees?.map(name => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Capacity Info */}
+      <div className="capacity-info">
+        <span style={{ fontWeight: '600', color: '#344563' }}>Max Capacity</span>
+        <div className="capacity-line"></div>
+        <span className="capacity-value">{maxCapacity}h</span>
+        <span className="capacity-formula">
+          ({workingDays} days × 8h × {teamSize})
+        </span>
+      </div>
+
+      {/* Chart */}
+      <div className="chart-container">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={dataPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f4f5f7" />
+            <XAxis
+              dataKey="displayDate"
+              tick={{ fontSize: 10, fill: '#6b778c' }}
+              axisLine={{ stroke: '#dfe1e6' }}
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: '#6b778c' }}
+              axisLine={{ stroke: '#dfe1e6' }}
+            />
+            <Tooltip content={<CustomTooltip />} />
+
+            {/* Zero line */}
+            <ReferenceLine y={0} stroke="#97a0af" strokeWidth={1} />
+
+            {/* Max capacity reference */}
+            <ReferenceLine y={maxCapacity} stroke="#00b8d9" strokeDasharray="5 5" />
+
+            {/* Remaining Estimate */}
+            <Bar
+              dataKey="remaining"
+              fill="#0065FF"
+              name="Remaining"
+              radius={[2, 2, 0, 0]}
+            />
+
+            {/* Ideal Line */}
+            <Line
+              type="linear"
+              dataKey="ideal"
+              stroke="#36B37E"
+              strokeWidth={3}
+              dot={false}
+              name="Ideal"
+            />
+
+            {/* Time Logged */}
+            <Line
+              type="monotone"
+              dataKey="timeLogged"
+              stroke="#00B8D9"
+              strokeWidth={2}
+              dot={{ fill: '#00B8D9', r: 3 }}
+              name="Time Logged"
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Legend */}
+      <div className="legend">
+        <div className="legend-item">
+          <div className="legend-line" style={{ background: '#36B37E' }}></div>
+          <span>Ideal</span>
+        </div>
+        <div className="legend-item">
+          <div className="legend-color" style={{ background: '#0065FF' }}></div>
+          <span>Remaining</span>
+        </div>
+        <div className="legend-item">
+          <div className="legend-line" style={{ background: '#00B8D9' }}></div>
+          <span>Time Logged</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default BurndownGadget;

@@ -1,0 +1,63 @@
+modules:
+  jira:dashboardGadget:
+    - key: sprint-burndown-gadget
+      resource: main
+      resolver:
+        function: resolver
+      title: Sprint Burndown Chart v2.1
+      description: Advanced burndown with scope tracking - Shows Added/Removed tasks with visual indicators
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/dashboard-gadget-icon.svg
+
+    - key: sprint-health-gadget
+      resource: main
+      resolver:
+        function: resolver
+      title: Sprint Health
+      description: Sprint health metrics - Underestimated, Normal, Good
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/dashboard-gadget-icon.svg
+
+    - key: at-risk-gadget
+      resource: main
+      resolver:
+        function: resolver
+      title: At Risk Items
+      description: Tasks with Time Box or Deadline exceeded
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/dashboard-gadget-icon.svg
+
+    - key: scope-changes-gadget
+      resource: main
+      resolver:
+        function: resolver
+      title: Scope Changes
+      description: Sprint scope changes - Added, Removed, Priority Changed
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/dashboard-gadget-icon.svg
+
+    - key: high-priority-gadget
+      resource: main
+      resolver:
+        function: resolver
+      title: High Priority Items
+      description: Highest and High priority items
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/dashboard-gadget-icon.svg
+
+  function:
+    - key: resolver
+      handler: index.handler
+
+resources:
+  - key: main
+    path: static/gadget/build
+
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - storage:app
+    - read:board-scope:jira-software
+    - read:project:jira
+    - read:sprint:jira-software
+
+app:
+  runtime:
+    name: nodejs20.x
+  id: ari:cloud:ecosystem::app/21d96009-2035-47e3-b060-347c35e53c4d
