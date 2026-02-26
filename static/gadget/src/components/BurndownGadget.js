@@ -661,8 +661,12 @@ const BurndownGadget = () => {
                       const statusColor = issue.status?.toLowerCase().includes('done') ? '#36B37E'
                         : issue.status?.toLowerCase().includes('progress') ? '#0065FF'
                         : '#42526E';
+                      const isSkipped = issue.skippedInTotal;
+                      const rowStyle = isSkipped
+                        ? { background: '#FFF0B3', opacity: 0.7 }
+                        : { background: i % 2 === 0 ? '#fff' : '#F4F5F7' };
                       return (
-                        <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#F4F5F7' }}>
+                        <tr key={i} style={rowStyle}>
                           <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0' }}>
                             <a
                               href={`/browse/${issue.key}`}
@@ -673,6 +677,11 @@ const BurndownGadget = () => {
                             >
                               {issue.key}
                             </a>
+                            {isSkipped && (
+                              <span style={{ fontSize: '8px', color: '#BF2600', marginLeft: '2px' }} title={`Parent has ${issue.subtaskCount} subtasks not in this view - skipped to avoid duplicate`}>
+                                (parent, {issue.subtaskCount} subs)
+                              </span>
+                            )}
                           </td>
                           <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {issue.summary}
@@ -683,29 +692,29 @@ const BurndownGadget = () => {
                           <td style={{ padding: '3px 4px', border: '1px solid #C1C7D0' }}>
                             {issue.assignee}
                           </td>
-                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>
+                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', textDecoration: isSkipped ? 'line-through' : 'none', color: isSkipped ? '#999' : 'inherit' }}>
                             {issue.originalEstimate}h
                           </td>
-                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>
+                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: isSkipped ? '#999' : '#0065FF', textDecoration: isSkipped ? 'line-through' : 'none' }}>
                             {issue.remainingEstimate}h
                           </td>
-                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>
+                          <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: isSkipped ? '#999' : '#00B8D9', textDecoration: isSkipped ? 'line-through' : 'none' }}>
                             {issue.timeSpent}h
                           </td>
                         </tr>
                       );
                     })}
-                    {/* Totals row */}
+                    {/* Totals row - exclude skipped parents */}
                     <tr style={{ background: '#DFE1E6', fontWeight: '700' }}>
                       <td colSpan={4} style={{ padding: '3px 4px', border: '1px solid #C1C7D0', textAlign: 'right' }}>TOTAL</td>
                       <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0' }}>
-                        {issueDetails.reduce((s, i) => s + (i.originalEstimate || 0), 0).toFixed(1)}h
+                        {issueDetails.filter(i => !i.skippedInTotal && !i.isSubtask).reduce((s, i) => s + (i.originalEstimate || 0), 0).toFixed(1)}h
                       </td>
                       <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#0065FF' }}>
-                        {issueDetails.reduce((s, i) => s + (i.remainingEstimate || 0), 0).toFixed(1)}h
+                        {issueDetails.filter(i => !i.skippedInTotal && !i.isSubtask).reduce((s, i) => s + (i.remainingEstimate || 0), 0).toFixed(1)}h
                       </td>
                       <td style={{ padding: '3px 4px', textAlign: 'right', border: '1px solid #C1C7D0', color: '#00B8D9' }}>
-                        {issueDetails.reduce((s, i) => s + (i.timeSpent || 0), 0).toFixed(1)}h
+                        {issueDetails.filter(i => !i.skippedInTotal && !i.isSubtask).reduce((s, i) => s + (i.timeSpent || 0), 0).toFixed(1)}h
                       </td>
                     </tr>
                   </tbody>

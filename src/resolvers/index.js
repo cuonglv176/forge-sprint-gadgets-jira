@@ -59,18 +59,34 @@ const sortByStatus = (items, statusField = 'status') => {
 };
 
 // ============ SUBTASK LOGIC ============
+// Detect if an issue is a parent task that has subtasks
+// Uses TWO methods:
+// 1. issue.fields.subtasks - Jira's own subtask list (always available, even if subtasks not in sprint)
+// 2. issue.fields.issuetype check - for subtask detection in the filtered list
+const isParentWithSubtasks = (issue) => {
+  // Check Jira's subtasks field (most reliable - shows ALL subtasks regardless of sprint/filter)
+  if (issue.fields.subtasks && issue.fields.subtasks.length > 0) return true;
+  // Check issue type name for "Main Task" pattern
+  const typeName = (issue.fields.issuetype?.name || '').toLowerCase();
+  if (typeName.includes('main task')) return true;
+  return false;
+};
+
+const isSubtaskIssue = (issue) => {
+  return issue.fields.issuetype?.subtask === true
+    || (issue.fields.issuetype?.name || '').toLowerCase().includes('sub-task')
+    || (issue.fields.issuetype?.name || '').toLowerCase().includes('subtask');
+};
+
 // Build subtask relationship map from issues list
 const buildSubtaskMap = (issues) => {
   const subtasksByParent = {};
   const subtaskKeys = new Set();
   const parentKeys = new Set();
 
+  // Method 1: Detect subtasks in the list by their issuetype
   issues.forEach(issue => {
-    const isSubtask = issue.fields.issuetype?.subtask === true
-      || (issue.fields.issuetype?.name || '').toLowerCase().includes('sub-task')
-      || (issue.fields.issuetype?.name || '').toLowerCase().includes('subtask');
-
-    if (isSubtask && issue.fields.parent?.key) {
+    if (isSubtaskIssue(issue) && issue.fields.parent?.key) {
       const parentKey = issue.fields.parent.key;
       if (!subtasksByParent[parentKey]) subtasksByParent[parentKey] = [];
       subtasksByParent[parentKey].push(issue);
@@ -79,24 +95,44 @@ const buildSubtaskMap = (issues) => {
     }
   });
 
+  // Method 2: Also mark parents that have subtasks via fields.subtasks
+  // Even if their subtasks are NOT in the filtered list
+  issues.forEach(issue => {
+    if (isParentWithSubtasks(issue)) {
+      parentKeys.add(issue.key);
+    }
+  });
+
   return { subtasksByParent, subtaskKeys, parentKeys };
 };
 
-// For a task with subtasks in sprint: use sum of subtask values only (skip parent's own value)
-// For a task without subtasks: use its own value
+// CORE LOGIC for computing effective values:
+// - If issue is a subtask → skip (will be counted via parent or already counted)
+// - If issue is a parent WITH subtasks in the filtered list → use sum of those subtasks only
+// - If issue is a parent WITHOUT subtasks in the filtered list → SKIP entirely
+//   (because Jira's timeestimate on parent = aggregated sum of ALL subtasks,
+//    which includes subtasks assigned to other people → would be wrong for per-person filter)
+// - If issue is a regular task (no subtasks) → use its own value
 const computeEffectiveRemaining = (issues) => {
-  const { subtasksByParent, subtaskKeys } = buildSubtaskMap(issues);
+  const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
 
   let totalRemaining = 0;
   issues.forEach(issue => {
     if (subtaskKeys.has(issue.key)) return; // Skip subtasks - counted via parent
 
-    if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
-      const subtaskRemaining = subtasksByParent[issue.key].reduce((sum, sub) =>
-        sum + secondsToHours(sub.fields.timeestimate), 0
-      );
-      totalRemaining += subtaskRemaining;
+    if (parentKeys.has(issue.key)) {
+      // This is a parent task
+      if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
+        // Has subtasks in filtered list → sum their values
+        const subtaskRemaining = subtasksByParent[issue.key].reduce((sum, sub) =>
+          sum + secondsToHours(sub.fields.timeestimate), 0
+        );
+        totalRemaining += subtaskRemaining;
+      }
+      // else: parent has subtasks but NONE are in filtered list → SKIP
+      // (parent's timeestimate = all subtasks including other assignees → wrong for filter)
     } else {
+      // Regular task (no subtasks) → use its own value
       totalRemaining += secondsToHours(issue.fields.timeestimate);
     }
   });
@@ -105,17 +141,20 @@ const computeEffectiveRemaining = (issues) => {
 };
 
 const computeEffectiveOriginalEstimate = (issues) => {
-  const { subtasksByParent, subtaskKeys } = buildSubtaskMap(issues);
+  const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
 
   let totalOE = 0;
   issues.forEach(issue => {
     if (subtaskKeys.has(issue.key)) return;
 
-    if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
-      const subtaskOE = subtasksByParent[issue.key].reduce((sum, sub) =>
-        sum + secondsToHours(sub.fields.timeoriginalestimate), 0
-      );
-      totalOE += subtaskOE;
+    if (parentKeys.has(issue.key)) {
+      if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
+        const subtaskOE = subtasksByParent[issue.key].reduce((sum, sub) =>
+          sum + secondsToHours(sub.fields.timeoriginalestimate), 0
+        );
+        totalOE += subtaskOE;
+      }
+      // else: skip parent with no subtasks in list
     } else {
       totalOE += secondsToHours(issue.fields.timeoriginalestimate);
     }
@@ -124,19 +163,21 @@ const computeEffectiveOriginalEstimate = (issues) => {
   return totalOE;
 };
 
-// FIX: Also compute effective timeSpent to avoid duplicate counting
 const computeEffectiveSpent = (issues) => {
-  const { subtasksByParent, subtaskKeys } = buildSubtaskMap(issues);
+  const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
 
   let totalSpent = 0;
   issues.forEach(issue => {
-    if (subtaskKeys.has(issue.key)) return; // Skip subtasks - counted via parent
+    if (subtaskKeys.has(issue.key)) return;
 
-    if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
-      const subtaskSpent = subtasksByParent[issue.key].reduce((sum, sub) =>
-        sum + secondsToHours(sub.fields.timespent), 0
-      );
-      totalSpent += subtaskSpent;
+    if (parentKeys.has(issue.key)) {
+      if (subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0) {
+        const subtaskSpent = subtasksByParent[issue.key].reduce((sum, sub) =>
+          sum + secondsToHours(sub.fields.timespent), 0
+        );
+        totalSpent += subtaskSpent;
+      }
+      // else: skip parent with no subtasks in list
     } else {
       totalSpent += secondsToHours(issue.fields.timespent);
     }
@@ -799,24 +840,32 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
 
     const issueDetails = issues.map(i => {
-      const isSubtask = subtaskKeys.has(i.key);
-      const hasSubtasks = parentKeys.has(i.key) || (subtasksByParent[i.key] && subtasksByParent[i.key].length > 0);
+      const isSubtask = isSubtaskIssue(i) || subtaskKeys.has(i.key);
+      const hasSubtasks = parentKeys.has(i.key);
+      const hasSubtasksInList = subtasksByParent[i.key] && subtasksByParent[i.key].length > 0;
 
       let effectiveOE = secondsToHours(i.fields.timeoriginalestimate);
       let effectiveRemaining = secondsToHours(i.fields.timeestimate);
       let effectiveSpent = secondsToHours(i.fields.timespent);
+      let skippedInTotal = false;
 
-      // If this is a parent with subtasks in sprint, show subtask totals instead
-      if (hasSubtasks && subtasksByParent[i.key]) {
-        effectiveOE = subtasksByParent[i.key].reduce((sum, sub) =>
-          sum + secondsToHours(sub.fields.timeoriginalestimate), 0
-        );
-        effectiveRemaining = subtasksByParent[i.key].reduce((sum, sub) =>
-          sum + secondsToHours(sub.fields.timeestimate), 0
-        );
-        effectiveSpent = subtasksByParent[i.key].reduce((sum, sub) =>
-          sum + secondsToHours(sub.fields.timespent), 0
-        );
+      if (hasSubtasks) {
+        if (hasSubtasksInList) {
+          // Parent with subtasks in filtered list → show subtask totals
+          effectiveOE = subtasksByParent[i.key].reduce((sum, sub) =>
+            sum + secondsToHours(sub.fields.timeoriginalestimate), 0
+          );
+          effectiveRemaining = subtasksByParent[i.key].reduce((sum, sub) =>
+            sum + secondsToHours(sub.fields.timeestimate), 0
+          );
+          effectiveSpent = subtasksByParent[i.key].reduce((sum, sub) =>
+            sum + secondsToHours(sub.fields.timespent), 0
+          );
+        } else {
+          // Parent with subtasks but NONE in filtered list → SKIP from totals
+          // Show raw values but mark as skipped
+          skippedInTotal = true;
+        }
       }
 
       return {
@@ -830,6 +879,8 @@ resolver.define('getBurndownData', async ({ payload }) => {
         issueType: i.fields.issuetype?.name || 'Task',
         isSubtask,
         hasSubtasks,
+        skippedInTotal,
+        subtaskCount: i.fields.subtasks?.length || 0,
         parentKey: i.fields.parent?.key || null
       };
     });
