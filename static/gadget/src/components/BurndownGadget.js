@@ -21,6 +21,28 @@ const BurndownGadget = () => {
   const [config, setConfig] = useState({ boardId: null, teamSize: 10 });
   const [selectedMember, setSelectedMember] = useState('All');
   const [showDebug, setShowDebug] = useState(false);
+  const [resettingBaseline, setResettingBaseline] = useState(false);
+  const [resetMessage, setResetMessage] = useState(null);
+
+  // Reset baseline
+  const handleResetBaseline = useCallback(async () => {
+    if (!config.boardId) return;
+    setResettingBaseline(true);
+    setResetMessage(null);
+    try {
+      const result = await invoke('deleteBaseline', { boardId: config.boardId });
+      if (result.success) {
+        setResetMessage({ type: 'success', text: 'Baseline reset! Reloading data...' });
+        setTimeout(() => { setResetMessage(null); loadData(); }, 1500);
+      } else {
+        setResetMessage({ type: 'error', text: result.error || 'Failed to reset baseline' });
+      }
+    } catch (err) {
+      setResetMessage({ type: 'error', text: err.message });
+    } finally {
+      setResettingBaseline(false);
+    }
+  }, [config.boardId, loadData]);
 
   // Load configuration
   const loadConfig = useCallback(async () => {
@@ -245,17 +267,52 @@ const BurndownGadget = () => {
           <div className="gadget-title">Sprint Burndown Chart</div>
           <div className="gadget-subtitle">{sprintName}</div>
         </div>
-        <select
-          className="select"
-          value={selectedMember}
-          onChange={(e) => setSelectedMember(e.target.value)}
-        >
-          <option value="All">All Team ({assignees?.length || 0})</option>
-          {assignees?.map(name => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <select
+            className="select"
+            value={selectedMember}
+            onChange={(e) => setSelectedMember(e.target.value)}
+          >
+            <option value="All">All Team ({assignees?.length || 0})</option>
+            {assignees?.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleResetBaseline}
+            disabled={resettingBaseline}
+            title="Reset baseline to recalculate with latest logic"
+            style={{
+              background: resettingBaseline ? '#DFE1E6' : '#FFEBE6',
+              border: '1px solid #FF8F73',
+              borderRadius: '3px',
+              padding: '4px 8px',
+              cursor: resettingBaseline ? 'not-allowed' : 'pointer',
+              fontSize: '11px',
+              fontWeight: '600',
+              color: '#BF2600',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {resettingBaseline ? '⟳ Resetting...' : '↺ Reset Baseline'}
+          </button>
+        </div>
       </div>
+
+      {/* Reset message */}
+      {resetMessage && (
+        <div style={{
+          padding: '8px 12px',
+          marginBottom: '8px',
+          borderRadius: '3px',
+          fontSize: '12px',
+          background: resetMessage.type === 'success' ? '#E3FCEF' : '#FFEBE6',
+          border: `1px solid ${resetMessage.type === 'success' ? '#ABF5D1' : '#FF8F73'}`,
+          color: resetMessage.type === 'success' ? '#006644' : '#BF2600'
+        }}>
+          {resetMessage.text}
+        </div>
+      )}
 
       {/* Metrics Summary */}
       <div style={{
