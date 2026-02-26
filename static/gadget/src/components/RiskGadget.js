@@ -57,9 +57,9 @@ const RiskGadget = () => {
 
   const getRiskBadge = (reason) => {
     if (reason === 'TIME_BOX_EXCEEDED') {
-      return <span className="badge badge-risk-time">⏰ Time Box</span>;
+      return <span className="badge badge-risk-time">Time Box</span>;
     }
-    return <span className="badge badge-risk-deadline">📅 Deadline</span>;
+    return <span className="badge badge-risk-deadline">Deadline</span>;
   };
 
   const getPriorityBadge = (priority) => {
@@ -102,7 +102,7 @@ const RiskGadget = () => {
   }
 
   if (error) {
-    return <div className="error">⚠️ {error}</div>;
+    return <div className="error">{error}</div>;
   }
 
   if (!data) return null;
@@ -128,7 +128,7 @@ const RiskGadget = () => {
 
       {items.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-icon">✅</div>
+          <div className="empty-state-icon">-</div>
           <div className="empty-state-text">All tasks on track!</div>
         </div>
       ) : (

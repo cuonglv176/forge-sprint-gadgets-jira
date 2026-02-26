@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke, router } from '@forge/bridge';
 import GadgetWrapper from './GadgetWrapper';
 
 const HealthGadget = () => {
@@ -7,6 +7,7 @@ const HealthGadget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [config, setConfig] = useState({ boardId: null });
+  const [expandedCategory, setExpandedCategory] = useState(null);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -77,27 +78,113 @@ const HealthGadget = () => {
   }
 
   if (error) {
-    return <div className="error">⚠️ {error}</div>;
+    return <div className="error">{error}</div>;
   }
 
   if (!data) return null;
 
-  const { counts, sprintName } = data;
+  const { counts, issues, sprintName } = data;
   const total = counts.total || 1;
 
-  const HealthCircle = ({ count, label, type }) => (
-    <div className={`health-circle health-${type}`}>
-      <div className="health-circle-value">
-        <span>{count}</span>
-        <small>/{total}</small>
+  const toggleCategory = (category) => {
+    setExpandedCategory(expandedCategory === category ? null : category);
+  };
+
+  const categoryConfig = {
+    under: { label: 'Underestimated', color: '#DE350B', bgColor: '#FFEBE6', borderColor: '#FF8F73' },
+    normal: { label: 'Normal', color: '#0052CC', bgColor: '#DEEBFF', borderColor: '#B3D4FF' },
+    good: { label: 'Good', color: '#006644', bgColor: '#E3FCEF', borderColor: '#ABF5D1' }
+  };
+
+  const IssueTable = ({ issueList, type }) => {
+    if (!issueList || issueList.length === 0) return null;
+    const cfg = categoryConfig[type];
+    return (
+      <div style={{ marginTop: '8px', marginBottom: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+          <thead>
+            <tr style={{ background: '#F4F5F7' }}>
+              <th style={{ padding: '4px 6px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Key</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Summary</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Status</th>
+              <th style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Est.</th>
+              <th style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Remain</th>
+              <th style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #DFE1E6', color: '#5E6C84', fontWeight: '500' }}>Spent</th>
+            </tr>
+          </thead>
+          <tbody>
+            {issueList.map((issue, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid #F4F5F7' }}>
+                <td style={{ padding: '4px 6px' }}>
+                  <a
+                    href={`/browse/${issue.key}`}
+                    onClick={(e) => { e.preventDefault(); router.open(`/browse/${issue.key}`); }}
+                    style={{ color: '#0052CC', textDecoration: 'none', fontWeight: '500', cursor: 'pointer' }}
+                  >
+                    {issue.key}
+                  </a>
+                </td>
+                <td style={{ padding: '4px 6px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#172B4D' }}>
+                  {issue.summary}
+                </td>
+                <td style={{ padding: '4px 6px', color: '#5E6C84', fontSize: '10px' }}>
+                  {issue.status}
+                </td>
+                <td style={{ padding: '4px 6px', textAlign: 'right', color: '#5E6C84' }}>
+                  {issue.originalEstimate}h
+                </td>
+                <td style={{ padding: '4px 6px', textAlign: 'right', color: '#172B4D', fontWeight: '500' }}>
+                  {issue.remainingEstimate}h
+                </td>
+                <td style={{ padding: '4px 6px', textAlign: 'right', color: '#5E6C84' }}>
+                  {issue.timeSpent}h
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <div className="health-circle-label" style={{
-        color: type === 'under' ? '#974f0c' : type === 'normal' ? '#0747a6' : '#006644'
-      }}>
-        {label}
+    );
+  };
+
+  const HealthCard = ({ count, type }) => {
+    const cfg = categoryConfig[type];
+    const isExpanded = expandedCategory === type;
+    const issueList = issues?.[type] || [];
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+
+    return (
+      <div style={{ marginBottom: '2px' }}>
+        <div
+          onClick={() => count > 0 && toggleCategory(type)}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 14px', borderRadius: '6px',
+            background: isExpanded ? cfg.bgColor : '#FAFBFC',
+            border: `1px solid ${isExpanded ? cfg.borderColor : '#EBECF0'}`,
+            cursor: count > 0 ? 'pointer' : 'default',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '8px', height: '8px', borderRadius: '50%',
+              background: cfg.color, opacity: 0.8
+            }} />
+            <span style={{ fontSize: '13px', color: '#172B4D', fontWeight: '500' }}>{cfg.label}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: '600', color: '#172B4D' }}>{count}</span>
+            <span style={{ fontSize: '11px', color: '#5E6C84' }}>({pct}%)</span>
+            {count > 0 && (
+              <span style={{ fontSize: '10px', color: '#5E6C84', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▼</span>
+            )}
+          </div>
+        </div>
+        {isExpanded && <IssueTable issueList={issueList} type={type} />}
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <GadgetWrapper 
@@ -106,66 +193,30 @@ const HealthGadget = () => {
       onConfigChange={loadConfig}
     >
       <div className="gadget">
-      <div className="gadget-header">
-        <div>
-          <div className="gadget-title">Sprint Health</div>
-          <div className="gadget-subtitle">{sprintName}</div>
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#172B4D' }}>Sprint Health</div>
+          <div style={{ fontSize: '12px', color: '#5E6C84', marginTop: '2px' }}>{sprintName}</div>
         </div>
-      </div>
 
-      <div className="health-circles">
-        <HealthCircle count={counts.under} label="Underestimated" type="under" />
-        <HealthCircle count={counts.normal} label="Normal" type="normal" />
-        <HealthCircle count={counts.good} label="Good" type="good" />
-      </div>
+        {/* Summary bar */}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', height: '6px', borderRadius: '3px', overflow: 'hidden', background: '#F4F5F7' }}>
+            <div style={{ width: `${(counts.under / total) * 100}%`, background: '#DE350B', transition: 'width 0.3s' }} />
+            <div style={{ width: `${(counts.normal / total) * 100}%`, background: '#0052CC', transition: 'width 0.3s' }} />
+            <div style={{ width: `${(counts.good / total) * 100}%`, background: '#006644', transition: 'width 0.3s' }} />
+          </div>
+          <div style={{ fontSize: '11px', color: '#5E6C84', marginTop: '4px', textAlign: 'right' }}>
+            {total} items
+          </div>
+        </div>
 
-      {/* Progress Bar */}
-      <div style={{ marginTop: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '4px' }}>
-          <span style={{ color: '#6b778c' }}>Overall Progress</span>
-          <span style={{ fontWeight: '600' }}>{total} Total Items</span>
-        </div>
-        <div className="progress-bar">
-          <div
-            className="progress-segment"
-            style={{
-              width: `${(counts.under / total) * 100}%`,
-              background: '#ff991f'
-            }}
-          />
-          <div
-            className="progress-segment"
-            style={{
-              width: `${(counts.normal / total) * 100}%`,
-              background: '#2684ff'
-            }}
-          />
-          <div
-            className="progress-segment"
-            style={{
-              width: `${(counts.good / total) * 100}%`,
-              background: '#36b37e'
-            }}
-          />
+        {/* Category cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <HealthCard count={counts.under} type="under" />
+          <HealthCard count={counts.normal} type="normal" />
+          <HealthCard count={counts.good} type="good" />
         </div>
       </div>
-
-      {/* Legend */}
-      <div className="legend" style={{ marginTop: '12px' }}>
-        <div className="legend-item">
-          <div className="legend-color" style={{ background: '#ff991f', borderRadius: '50%', width: '8px', height: '8px' }}></div>
-          <span>Under</span>
-        </div>
-        <div className="legend-item">
-          <div className="legend-color" style={{ background: '#2684ff', borderRadius: '50%', width: '8px', height: '8px' }}></div>
-          <span>Normal</span>
-        </div>
-        <div className="legend-item">
-          <div className="legend-color" style={{ background: '#36b37e', borderRadius: '50%', width: '8px', height: '8px' }}></div>
-          <span>Good</span>
-        </div>
-      </div>
-    </div>
     </GadgetWrapper>
   );
 };

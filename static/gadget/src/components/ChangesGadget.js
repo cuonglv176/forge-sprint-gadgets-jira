@@ -133,24 +133,24 @@ const ChangesGadget = () => {
       </div>
 
       {/* Summary */}
-      <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
-        <div style={{ flex: 1, textAlign: 'center', padding: '12px', background: '#e3fcef', borderRadius: '3px' }}>
-          <div style={{ fontSize: '20px', fontWeight: '700', color: '#006644' }}>{totalAdded}</div>
-          <div style={{ fontSize: '11px', color: '#006644' }}>Added</div>
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FAFBFC', border: '1px solid #EBECF0', borderRadius: '4px' }}>
+          <div style={{ fontSize: '18px', fontWeight: '600', color: '#172B4D' }}>{totalAdded}</div>
+          <div style={{ fontSize: '10px', color: '#7A869A' }}>Added</div>
         </div>
-        <div style={{ flex: 1, textAlign: 'center', padding: '12px', background: '#ffebe6', borderRadius: '3px' }}>
-          <div style={{ fontSize: '20px', fontWeight: '700', color: '#bf2600' }}>{totalRemoved}</div>
-          <div style={{ fontSize: '11px', color: '#bf2600' }}>Removed</div>
+        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FAFBFC', border: '1px solid #EBECF0', borderRadius: '4px' }}>
+          <div style={{ fontSize: '18px', fontWeight: '600', color: '#172B4D' }}>{totalRemoved}</div>
+          <div style={{ fontSize: '10px', color: '#7A869A' }}>Removed</div>
         </div>
-        <div style={{ flex: 1, textAlign: 'center', padding: '12px', background: '#fff0b3', borderRadius: '3px' }}>
-          <div style={{ fontSize: '20px', fontWeight: '700', color: '#974f0c' }}>{totalPriorityChanged}</div>
-          <div style={{ fontSize: '11px', color: '#974f0c' }}>Priority</div>
+        <div style={{ flex: 1, textAlign: 'center', padding: '10px', background: '#FAFBFC', border: '1px solid #EBECF0', borderRadius: '4px' }}>
+          <div style={{ fontSize: '18px', fontWeight: '600', color: '#172B4D' }}>{totalPriorityChanged}</div>
+          <div style={{ fontSize: '10px', color: '#7A869A' }}>Priority</div>
         </div>
       </div>
 
       {allChanges.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-icon">📊</div>
+          <div className="empty-state-icon">-</div>
           <div className="empty-state-text">No scope changes detected</div>
         </div>
       ) : (

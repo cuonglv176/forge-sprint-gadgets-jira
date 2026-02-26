@@ -19,16 +19,16 @@ body {
   align-items: center;
   justify-content: center;
   padding: 40px;
-  color: #6b778c;
+  color: #7A869A;
 }
 
 .spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid #dfe1e6;
-  border-top-color: #0052cc;
+  width: 24px;
+  height: 24px;
+  border: 2px solid #EBECF0;
+  border-top-color: #5E6C84;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -37,19 +37,21 @@ body {
 
 /* Error message */
 .error {
-  padding: 16px;
+  padding: 12px 16px;
   text-align: center;
-  color: #de350b;
-  background: #ffebe6;
-  border-radius: 3px;
+  color: #AE2A19;
+  background: #FFF;
+  border: 1px solid #FFDAD1;
+  border-radius: 4px;
   margin: 16px;
+  font-size: 13px;
 }
 
 /* Configure message */
 .configure-message {
   padding: 32px;
   text-align: center;
-  color: #6b778c;
+  color: #7A869A;
 }
 
 /* Gadget container */
@@ -65,15 +67,15 @@ body {
 }
 
 .gadget-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
-  color: #172b4d;
+  color: #172B4D;
 }
 
 .gadget-subtitle {
   font-size: 12px;
-  color: #6b778c;
-  margin-top: 2px;
+  color: #7A869A;
+  margin-top: 1px;
 }
 
 /* Buttons */
@@ -81,47 +83,48 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 12px;
+  padding: 5px 12px;
   border: none;
   border-radius: 3px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s;
 }
 
 .btn-primary {
-  background: #0052cc;
+  background: #0052CC;
   color: #fff;
 }
 
 .btn-primary:hover {
-  background: #0747a6;
+  background: #0747A6;
 }
 
 .btn-secondary {
-  background: #f4f5f7;
-  color: #172b4d;
+  background: #F4F5F7;
+  color: #42526E;
+  border: 1px solid #DFE1E6;
 }
 
 .btn-secondary:hover {
-  background: #ebecf0;
+  background: #EBECF0;
 }
 
 /* Select */
 .select {
-  padding: 6px 12px;
-  border: 1px solid #dfe1e6;
+  padding: 5px 10px;
+  border: 1px solid #DFE1E6;
   border-radius: 3px;
-  font-size: 13px;
-  background: #fff;
+  font-size: 12px;
+  background: #FAFBFC;
+  color: #172B4D;
   cursor: pointer;
 }
 
 .select:focus {
   outline: none;
-  border-color: #0052cc;
-  box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.2);
+  border-color: #4C9AFF;
 }
 
 /* Tables */
@@ -133,102 +136,103 @@ body {
 
 .table th,
 .table td {
-  padding: 8px 12px;
+  padding: 6px 10px;
   text-align: left;
-  border-bottom: 1px solid #f4f5f7;
+  border-bottom: 1px solid #F4F5F7;
 }
 
 .table th {
-  background: #f4f5f7;
-  font-weight: 600;
-  color: #6b778c;
+  background: #FAFBFC;
+  font-weight: 500;
+  color: #7A869A;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.5px;
 }
 
 .table tr:hover {
-  background: #fafbfc;
+  background: #FAFBFC;
 }
 
 /* Issue key link */
 .issue-key {
-  color: #0052cc;
+  color: #0052CC;
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 12px;
 }
 
 .issue-key:hover {
   text-decoration: underline;
 }
 
-/* Badges */
+/* Badges - minimal style */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  gap: 3px;
+  padding: 1px 6px;
   border-radius: 3px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .badge-risk-time {
-  background: #ffebe6;
-  color: #bf2600;
+  background: #FFF0F0;
+  color: #AE2A19;
 }
 
 .badge-risk-deadline {
-  background: #eae6ff;
-  color: #5243aa;
+  background: #F3F0FF;
+  color: #5243AA;
 }
 
 .badge-priority-highest {
-  background: #ffebe6;
-  color: #bf2600;
+  background: #FFF0F0;
+  color: #AE2A19;
 }
 
 .badge-priority-high {
-  background: #fff0b3;
-  color: #974f0c;
+  background: #FFF7E6;
+  color: #8B6914;
 }
 
 .badge-priority-medium {
-  background: #e3fcef;
-  color: #006644;
+  background: #F4F5F7;
+  color: #5E6C84;
 }
 
 .badge-change-added {
-  background: #e3fcef;
-  color: #006644;
+  background: #F0FFF4;
+  color: #216E4E;
 }
 
 .badge-change-removed {
-  background: #ffebe6;
-  color: #bf2600;
+  background: #FFF0F0;
+  color: #AE2A19;
 }
 
 .badge-change-priority {
-  background: #fff0b3;
-  color: #974f0c;
+  background: #FFF7E6;
+  color: #8B6914;
 }
 
 .badge-status-done {
-  background: #e3fcef;
-  color: #006644;
+  background: #F0FFF4;
+  color: #216E4E;
 }
 
 .badge-status-progress {
-  background: #deebff;
-  color: #0747a6;
+  background: #F0F4FF;
+  color: #0747A6;
 }
 
 .badge-status-todo {
-  background: #f4f5f7;
-  color: #42526e;
+  background: #F4F5F7;
+  color: #5E6C84;
 }
 
-/* Health circles */
+/* Health circles - removed, using minimal card layout now */
 .health-circles {
   display: flex;
   justify-content: space-around;
@@ -262,34 +266,35 @@ body {
 }
 
 .health-under .health-circle-value {
-  background: linear-gradient(135deg, #fff0b3 0%, #ffe380 100%);
-  border: 2px solid #ff991f;
-  color: #974f0c;
+  background: #FFF0F0;
+  border: 1.5px solid #FFDAD1;
+  color: #AE2A19;
 }
 
 .health-normal .health-circle-value {
-  background: linear-gradient(135deg, #deebff 0%, #b3d4ff 100%);
-  border: 2px solid #2684ff;
-  color: #0747a6;
+  background: #F0F4FF;
+  border: 1.5px solid #B3D4FF;
+  color: #0747A6;
 }
 
 .health-good .health-circle-value {
-  background: linear-gradient(135deg, #e3fcef 0%, #abf5d1 100%);
-  border: 2px solid #36b37e;
-  color: #006644;
+  background: #F0FFF4;
+  border: 1.5px solid #BAF3DB;
+  color: #216E4E;
 }
 
 .health-circle-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 500;
   text-transform: uppercase;
+  color: #7A869A;
 }
 
 /* Progress bar */
 .progress-bar {
-  height: 8px;
-  background: #f4f5f7;
-  border-radius: 4px;
+  height: 6px;
+  background: #F4F5F7;
+  border-radius: 3px;
   overflow: hidden;
   display: flex;
 }
@@ -304,23 +309,41 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   font-size: 12px;
 }
 
 .capacity-line {
   flex: 1;
-  border-top: 2px dashed #00b8d9;
+  border-top: 1px dashed #C1C7D0;
 }
 
 .capacity-value {
-  font-weight: 600;
-  color: #00a3bf;
+  font-weight: 500;
+  color: #5E6C84;
 }
 
 .capacity-formula {
   font-size: 11px;
-  color: #97a0af;
+  color: #97A0AF;
+}
+
+/* Metric cards */
+.metric-card {
+  padding: 0;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: #7A869A;
+  font-weight: 400;
+  margin-bottom: 2px;
+}
+
+.metric-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #172B4D;
 }
 
 /* Chart container */
@@ -334,7 +357,7 @@ body {
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 14px;
   font-size: 11px;
 }
 
@@ -345,46 +368,48 @@ body {
 }
 
 .legend-color {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 2px;
 }
 
 .legend-line {
-  width: 16px;
-  height: 3px;
-  border-radius: 2px;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
 }
 
 /* Empty state */
 .empty-state {
   text-align: center;
-  padding: 40px 20px;
-  color: #6b778c;
+  padding: 32px 20px;
+  color: #7A869A;
 }
 
 .empty-state-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.5;
 }
 
 .empty-state-text {
-  font-weight: 500;
+  font-weight: 400;
+  font-size: 13px;
 }
 
 /* Count badge */
 .count-badge {
-  background: #dfe1e6;
-  color: #42526e;
+  background: #F4F5F7;
+  color: #5E6C84;
   padding: 2px 8px;
   border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .count-badge.danger {
-  background: #ffebe6;
-  color: #bf2600;
+  background: #FFF0F0;
+  color: #AE2A19;
 }
 
 /* Config form */
@@ -400,29 +425,30 @@ body {
   display: block;
   margin-bottom: 6px;
   font-size: 12px;
-  font-weight: 600;
-  color: #6b778c;
+  font-weight: 500;
+  color: #5E6C84;
 }
 
 .form-input,
 .form-select {
   width: 100%;
   padding: 8px 12px;
-  border: 2px solid #dfe1e6;
+  border: 1px solid #DFE1E6;
   border-radius: 3px;
   font-size: 14px;
+  background: #FAFBFC;
 }
 
 .form-input:focus,
 .form-select:focus {
   outline: none;
-  border-color: #0052cc;
+  border-color: #4C9AFF;
 }
 
 .form-help {
   margin-top: 4px;
   font-size: 11px;
-  color: #6b778c;
+  color: #7A869A;
 }
 
 .form-actions {
@@ -433,13 +459,14 @@ body {
 }
 
 .formula-preview {
-  background: #f4f5f7;
+  background: #FAFBFC;
   padding: 12px;
   border-radius: 3px;
   font-size: 12px;
   margin-top: 16px;
+  border: 1px solid #EBECF0;
 }
 
 .formula-preview strong {
-  color: #0052cc;
+  color: #0052CC;
 }

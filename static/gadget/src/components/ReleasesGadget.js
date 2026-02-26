@@ -61,10 +61,10 @@ const ReleasesGadget = () => {
   };
 
   const getProgressColor = (progress) => {
-    if (progress >= 80) return '#36B37E';
-    if (progress >= 50) return '#FFAB00';
-    if (progress >= 20) return '#FF991F';
-    return '#DE350B';
+    if (progress >= 80) return '#57D9A3';
+    if (progress >= 50) return '#B3D4FF';
+    if (progress >= 20) return '#FFD666';
+    return '#FF8F73';
   };
 
   const getStatusBadge = (status) => {
@@ -80,11 +80,11 @@ const ReleasesGadget = () => {
 
   const getPriorityIcon = (priority) => {
     const p = priority?.toLowerCase() || '';
-    if (p === 'highest') return '🔴';
-    if (p === 'high') return '🟠';
-    if (p === 'medium') return '🟡';
-    if (p === 'low') return '🔵';
-    return '⚪';
+    if (p === 'highest') return '●';
+    if (p === 'high') return '●';
+    if (p === 'medium') return '●';
+    if (p === 'low') return '●';
+    return '○';
   };
 
   const formatDate = (dateStr) => {
@@ -149,7 +149,7 @@ const ReleasesGadget = () => {
 
       {releases.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-icon">📦</div>
+          <div className="empty-state-icon">-</div>
           <div className="empty-state-text">No releases linked to sprint tasks</div>
           {unversionedCount > 0 && (
             <p style={{ fontSize: '12px', color: '#6b778c', marginTop: '8px' }}>
@@ -192,8 +192,8 @@ const ReleasesGadget = () => {
                     marginBottom: '8px'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '16px' }}>
-                        {release.released ? '✅' : '📦'}
+                      <span style={{ fontSize: '12px', color: '#7A869A' }}>
+                        {release.released ? '●' : '○'}
                       </span>
                       <span style={{
                         fontWeight: '600',
@@ -271,10 +271,10 @@ const ReleasesGadget = () => {
                         Est: <strong style={{ color: '#172B4D' }}>{release.totalEstimate}h</strong>
                       </span>
                       <span>
-                        Done: <strong style={{ color: '#36B37E' }}>{release.doneEstimate}h</strong>
+                        Done: <strong style={{ color: '#172B4D' }}>{release.doneEstimate}h</strong>
                       </span>
                       <span>
-                        Remaining: <strong style={{ color: '#FF991F' }}>
+                        Remaining: <strong style={{ color: '#5E6C84' }}>
                           {Math.round((release.totalEstimate - release.doneEstimate) * 10) / 10}h
                         </strong>
                       </span>
@@ -348,16 +348,16 @@ const ReleasesGadget = () => {
           {unversionedCount > 0 && (
             <div style={{
               padding: '10px 16px',
-              background: '#FFF7E6',
-              border: '1px solid #FFE7BA',
+              background: '#FAFBFC',
+              border: '1px solid #EBECF0',
               borderRadius: '4px',
               fontSize: '12px',
-              color: '#974F0C',
+              color: '#5E6C84',
               display: 'flex',
               alignItems: 'center',
               gap: '8px'
             }}>
-              <span>⚠️</span>
+              <span></span>
               <span>
                 <strong>{unversionedCount}</strong> task{unversionedCount > 1 ? 's' : ''} in this sprint {unversionedCount > 1 ? 'are' : 'is'} not linked to any release version.
               </span>

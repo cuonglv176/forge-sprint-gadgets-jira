@@ -63,11 +63,11 @@ const PriorityGadget = () => {
 
   const getPriorityBadge = (priority) => {
     const p = priority?.toLowerCase() || '';
-    if (p === 'highest') return <span className="badge badge-priority-highest">🔴 {priority}</span>;
-    if (p === 'high') return <span className="badge badge-priority-high">🟠 {priority}</span>;
-    if (p === 'medium') return <span className="badge" style={{ background: '#FFF0B3', color: '#974F0C' }}>🟡 {priority}</span>;
-    if (p === 'low') return <span className="badge" style={{ background: '#DEEBFF', color: '#0747A6' }}>🔵 {priority}</span>;
-    return <span className="badge" style={{ background: '#F4F5F7', color: '#42526E' }}>⚪ {priority}</span>;
+    if (p === 'highest') return <span className="badge badge-priority-highest">{priority}</span>;
+    if (p === 'high') return <span className="badge badge-priority-high">{priority}</span>;
+    if (p === 'medium') return <span className="badge" style={{ background: '#F4F5F7', color: '#5E6C84' }}>{priority}</span>;
+    if (p === 'low') return <span className="badge" style={{ background: '#F4F5F7', color: '#5E6C84' }}>{priority}</span>;
+    return <span className="badge" style={{ background: '#F4F5F7', color: '#7A869A' }}>{priority}</span>;
   };
 
   const getStatusBadge = (status) => {
@@ -105,8 +105,8 @@ const PriorityGadget = () => {
     const overPct = maxBar > 0 ? (overAmount / maxBar) * 100 : 0;
 
     // Colors: Blue = logged, Light blue = remaining, Red = over estimate
-    const spentColor = isOverEstimate ? '#DE350B' : '#0065FF';
-    const remainColor = '#DEEBFF';
+    const spentColor = isOverEstimate ? '#FF8F73' : '#4C9AFF';
+    const remainColor = '#EBECF0';
 
     return (
       <div style={{ minWidth: '120px' }}>
@@ -237,34 +237,36 @@ const PriorityGadget = () => {
           minWidth: expanded ? '60px' : '80px',
           textAlign: 'center',
           padding: expanded ? '8px 4px' : '12px',
-          background: '#ffebe6',
-          borderRadius: '3px'
+          background: '#FAFBFC',
+          border: '1px solid #EBECF0',
+          borderRadius: '4px'
         }}>
           <div style={{
-            fontSize: expanded ? '18px' : '24px',
-            fontWeight: '700',
-            color: '#bf2600'
+            fontSize: expanded ? '16px' : '20px',
+            fontWeight: '600',
+            color: '#172B4D'
           }}>
             {highestCount}
           </div>
-          <div style={{ fontSize: '10px', color: '#bf2600' }}>🔴 Highest</div>
+          <div style={{ fontSize: '10px', color: '#7A869A' }}>Highest</div>
         </div>
         <div style={{
           flex: 1,
           minWidth: expanded ? '60px' : '80px',
           textAlign: 'center',
           padding: expanded ? '8px 4px' : '12px',
-          background: '#fff0b3',
-          borderRadius: '3px'
+          background: '#FAFBFC',
+          border: '1px solid #EBECF0',
+          borderRadius: '4px'
         }}>
           <div style={{
-            fontSize: expanded ? '18px' : '24px',
-            fontWeight: '700',
-            color: '#974f0c'
+            fontSize: expanded ? '16px' : '20px',
+            fontWeight: '600',
+            color: '#172B4D'
           }}>
             {highCount}
           </div>
-          <div style={{ fontSize: '10px', color: '#974f0c' }}>🟠 High</div>
+          <div style={{ fontSize: '10px', color: '#7A869A' }}>High</div>
         </div>
         {expanded && (
           <>
@@ -273,39 +275,42 @@ const PriorityGadget = () => {
               minWidth: '60px',
               textAlign: 'center',
               padding: '8px 4px',
-              background: '#FFF7E6',
-              borderRadius: '3px'
+              background: '#FAFBFC',
+              border: '1px solid #EBECF0',
+              borderRadius: '4px'
             }}>
-              <div style={{ fontSize: '18px', fontWeight: '700', color: '#974f0c' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>
                 {mediumCount || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#974f0c' }}>🟡 Medium</div>
+              <div style={{ fontSize: '10px', color: '#7A869A' }}>Medium</div>
             </div>
             <div style={{
               flex: 1,
               minWidth: '60px',
               textAlign: 'center',
               padding: '8px 4px',
-              background: '#DEEBFF',
-              borderRadius: '3px'
+              background: '#FAFBFC',
+              border: '1px solid #EBECF0',
+              borderRadius: '4px'
             }}>
-              <div style={{ fontSize: '18px', fontWeight: '700', color: '#0747a6' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>
                 {lowCount || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#0747a6' }}>🔵 Low</div>
+              <div style={{ fontSize: '10px', color: '#7A869A' }}>Low</div>
             </div>
             <div style={{
               flex: 1,
               minWidth: '60px',
               textAlign: 'center',
               padding: '8px 4px',
-              background: '#F4F5F7',
-              borderRadius: '3px'
+              background: '#FAFBFC',
+              border: '1px solid #EBECF0',
+              borderRadius: '4px'
             }}>
-              <div style={{ fontSize: '18px', fontWeight: '700', color: '#42526E' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#172B4D' }}>
                 {lowestCount || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#42526E' }}>⚪ Lowest</div>
+              <div style={{ fontSize: '10px', color: '#7A869A' }}>Lowest</div>
             </div>
           </>
         )}
@@ -327,31 +332,31 @@ const PriorityGadget = () => {
             {highestCount > 0 && (
               <div className="progress-segment" style={{
                 width: `${(highestCount / total) * 100}%`,
-                background: '#DE350B'
+                background: '#FF8F73'
               }} />
             )}
             {highCount > 0 && (
               <div className="progress-segment" style={{
                 width: `${(highCount / total) * 100}%`,
-                background: '#FF991F'
+                background: '#FFD666'
               }} />
             )}
             {(mediumCount || 0) > 0 && (
               <div className="progress-segment" style={{
                 width: `${((mediumCount || 0) / total) * 100}%`,
-                background: '#FFAB00'
+                background: '#B3D4FF'
               }} />
             )}
             {(lowCount || 0) > 0 && (
               <div className="progress-segment" style={{
                 width: `${((lowCount || 0) / total) * 100}%`,
-                background: '#2684FF'
+                background: '#C1C7D0'
               }} />
             )}
             {(lowestCount || 0) > 0 && (
               <div className="progress-segment" style={{
                 width: `${((lowestCount || 0) / total) * 100}%`,
-                background: '#97A0AF'
+                background: '#DFE1E6'
               }} />
             )}
           </div>
@@ -361,7 +366,7 @@ const PriorityGadget = () => {
       {/* Items Table */}
       {items.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-icon">✨</div>
+          <div className="empty-state-icon">-</div>
           <div className="empty-state-text">
             {expanded ? 'No tasks in sprint' : 'No high priority items'}
           </div>

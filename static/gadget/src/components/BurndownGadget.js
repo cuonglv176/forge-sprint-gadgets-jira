@@ -111,7 +111,7 @@ const BurndownGadget = () => {
           border: '1px solid #dfe1e6',
           borderRadius: '3px',
           padding: '12px',
-          boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
+          boxShadow: '0 2px 4px rgba(0,0,0,0.08)'
         }}>
           <p style={{ fontWeight: '600', marginBottom: '8px', color: '#172B4D' }}>{label}</p>
           {(() => {
@@ -125,7 +125,7 @@ const BurndownGadget = () => {
               let displayValue = Math.abs(entry.value);
 
               if (entry.dataKey === 'remainingNegative') {
-                displayColor = '#DE350B';
+                displayColor = '#FFDAD1';
                 displayName = 'Remaining (Over Capacity)';
               }
 
@@ -294,14 +294,14 @@ const BurndownGadget = () => {
             disabled={resettingBaseline}
             title="Reset baseline to recalculate with latest logic"
             style={{
-              background: resettingBaseline ? '#DFE1E6' : '#FFEBE6',
-              border: '1px solid #FF8F73',
+              background: resettingBaseline ? '#F4F5F7' : '#FAFBFC',
+              border: '1px solid #DFE1E6',
               borderRadius: '3px',
               padding: '4px 8px',
               cursor: resettingBaseline ? 'not-allowed' : 'pointer',
               fontSize: '11px',
-              fontWeight: '600',
-              color: '#BF2600',
+              fontWeight: '500',
+              color: '#5E6C84',
               whiteSpace: 'nowrap'
             }}
           >
@@ -335,28 +335,28 @@ const BurndownGadget = () => {
       }}>
         <div className="metric-card">
           <div className="metric-label">Max Capacity</div>
-          <div className="metric-value" style={{ color: '#00B8D9' }}>
+          <div className="metric-value">
             {maxCapacity != null ? `${maxCapacity}h` : '0h'}
           </div>
         </div>
 
         <div className="metric-card">
           <div className="metric-label">Original Estimate</div>
-          <div className="metric-value" style={{ color: '#172B4D' }}>
+          <div className="metric-value">
             {totalOriginalEstimate != null ? `${totalOriginalEstimate}h` : '0h'}
           </div>
         </div>
 
         <div className="metric-card">
           <div className="metric-label">Remaining</div>
-          <div className="metric-value" style={{ color: '#0065FF' }}>
+          <div className="metric-value">
             {currentRemaining != null ? `${currentRemaining}h` : '0h'}
           </div>
         </div>
 
         <div className="metric-card">
           <div className="metric-label">Time Logged</div>
-          <div className="metric-value" style={{ color: '#00B8D9' }}>
+          <div className="metric-value">
             {totalSpent != null ? `${totalSpent}h` : '0h'}
           </div>
         </div>
@@ -366,12 +366,12 @@ const BurndownGadget = () => {
             <div className="metric-label">Scope Changes</div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               {scopeAddedTotal > 0 && (
-                <span className="metric-value" style={{ color: '#FF991F', fontSize: '14px' }}>
+                <span className="metric-value" style={{ fontSize: '14px' }}>
                   +{scopeAddedTotal}h ({addedIssuesCount})
                 </span>
               )}
               {scopeRemovedTotal > 0 && (
-                <span className="metric-value" style={{ color: '#DE350B', fontSize: '14px' }}>
+                <span className="metric-value" style={{ fontSize: '14px', color: '#AE2A19' }}>
                   -{scopeRemovedTotal}h ({removedIssuesCount})
                 </span>
               )}
@@ -382,7 +382,7 @@ const BurndownGadget = () => {
 
       {/* Sprint Info */}
       <div className="capacity-info" style={{ marginTop: '12px' }}>
-        <span style={{ fontWeight: '600', color: '#344563' }}>Sprint Duration</span>
+        <span style={{ fontWeight: '500', color: '#5E6C84', fontSize: '12px' }}>Sprint Duration</span>
         <div className="capacity-line"></div>
         <span className="capacity-value">
           {formatSprintDate(sprintStartDate)} — {formatSprintDate(sprintEndDate)}
@@ -394,7 +394,7 @@ const BurndownGadget = () => {
 
       {/* Max Capacity Info */}
       <div className="capacity-info" style={{ marginTop: '4px' }}>
-        <span style={{ fontWeight: '600', color: '#344563' }}>Max Capacity</span>
+        <span style={{ fontWeight: '500', color: '#5E6C84', fontSize: '12px' }}>Max Capacity</span>
         <div className="capacity-line"></div>
         <span className="capacity-value">{maxCapacity}h</span>
         <span className="capacity-formula">
@@ -444,7 +444,7 @@ const BurndownGadget = () => {
             {/* Scope Removed (Negative Bar) */}
             <Bar
               dataKey="removed"
-              fill="#DE350B"
+              fill="#FFDAD1"
               name="Scope Removed"
               radius={[0, 0, 2, 2]}
               stackId="burndown"
@@ -454,7 +454,7 @@ const BurndownGadget = () => {
             <Bar
               dataKey="remaining"
               name="Remaining"
-              fill="#0065FF"
+              fill="#4C9AFF"
               radius={[0, 0, 0, 0]}
               stackId="burndown"
             />
@@ -462,7 +462,7 @@ const BurndownGadget = () => {
             {/* Scope Added (Stacked on Top) */}
             <Bar
               dataKey="added"
-              fill="#FF991F"
+              fill="#FFD666"
               name="Scope Added"
               radius={[2, 2, 0, 0]}
               stackId="burndown"
@@ -472,8 +472,8 @@ const BurndownGadget = () => {
             <Line
               type="linear"
               dataKey="ideal"
-              stroke="#36B37E"
-              strokeWidth={3}
+              stroke="#57D9A3"
+              strokeWidth={2}
               dot={false}
               name="Ideal Burndown"
               connectNulls={true}
@@ -483,9 +483,9 @@ const BurndownGadget = () => {
             <Line
               type="monotone"
               dataKey="timeLogged"
-              stroke="#00B8D9"
-              strokeWidth={2}
-              dot={{ fill: '#00B8D9', r: 3 }}
+              stroke="#79E2F2"
+              strokeWidth={1.5}
+              dot={{ fill: '#79E2F2', r: 2 }}
               strokeDasharray="5 5"
               name="Time Logged"
               connectNulls={true}
@@ -498,55 +498,36 @@ const BurndownGadget = () => {
       {(addedIssuesCount > 0 || removedIssuesCount > 0) && (
         <div style={{
           marginTop: '16px',
-          padding: '12px',
-          background: '#FFF7E6',
-          border: '1px solid #FFE7BA',
+          padding: '8px 12px',
+          background: '#FAFBFC',
+          border: '1px solid #EBECF0',
           borderRadius: '3px',
           fontSize: '12px',
-          color: '#172B4D'
+          color: '#5E6C84'
         }}>
-          <strong>Scope Changes Detected:</strong>
-          <ul style={{ margin: '8px 0 0 20px', paddingLeft: 0 }}>
-            {addedIssuesCount > 0 && (
-              <li>
-                <span style={{ color: '#FF991F', fontWeight: '600' }}>
-                  +{addedIssuesCount} issue{addedIssuesCount > 1 ? 's' : ''}
-                </span> added to sprint ({scopeAddedTotal}h)
-              </li>
-            )}
-            {removedIssuesCount > 0 && (
-              <li>
-                <span style={{ color: '#DE350B', fontWeight: '600' }}>
-                  -{removedIssuesCount} issue{removedIssuesCount > 1 ? 's' : ''}
-                </span> removed from sprint ({scopeRemovedTotal}h)
-              </li>
-            )}
-          </ul>
+          <span style={{ fontWeight: '500' }}>Scope Changes:</span>
+          {addedIssuesCount > 0 && (
+            <span style={{ marginLeft: '8px' }}>
+              +{addedIssuesCount} added ({scopeAddedTotal}h)
+            </span>
+          )}
+          {removedIssuesCount > 0 && (
+            <span style={{ marginLeft: '8px', color: '#AE2A19' }}>
+              -{removedIssuesCount} removed ({scopeRemovedTotal}h)
+            </span>
+          )}
         </div>
       )}
 
-      {/* Help Text */}
-      <div style={{
-        marginTop: '12px',
-        padding: '8px',
-        fontSize: '11px',
-        color: '#6B778C',
-        borderTop: '1px solid #DFE1E6'
-      }}>
-        <strong>Legend:</strong>
-        <span style={{ color: '#36B37E', marginLeft: '8px' }}>●</span> Ideal = Linear from Max Capacity ({maxCapacity}h) to 0
-        <span style={{ color: '#0065FF', marginLeft: '12px' }}>■</span> Remaining = OE - cumulative logged + scope changes
-        <span style={{ color: '#FF991F', marginLeft: '12px' }}>■</span> Added = Tasks added after sprint start
-        <span style={{ color: '#DE350B', marginLeft: '12px' }}>■</span> Removed = Tasks removed from sprint
-      </div>
+
 
       {/* Debug Panel */}
-      <div style={{ marginTop: '12px', borderTop: '2px solid #FF991F' }}>
+      <div style={{ marginTop: '12px', borderTop: '1px solid #EBECF0' }}>
         <button
           onClick={() => setShowDebug(!showDebug)}
           style={{
-            background: '#FFF7E6',
-            border: '1px solid #FFE7BA',
+            background: '#FAFBFC',
+            border: '1px solid #DFE1E6',
             borderRadius: '3px',
             padding: '4px 12px',
             cursor: 'pointer',
