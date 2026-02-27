@@ -1,9 +1,10 @@
 import Resolver from '@forge/resolver';
 import api, { route, storage } from '@forge/api';
 
-const resolver = new Resolver();
+console.log('[APP VERSION] v2.64.0 - backward calc + v3 API + sprint health fix');
 
-// ============ CONSTANTS ============
+const resolver = new Resolver();
+// ============ CONSTANTS ==============
 const WORKING_DAYS_DEFAULT = 10;
 const HOURS_PER_DAY = 8;
 const JIRA_BASE_URL = 'https://jeisysvn.atlassian.net';
