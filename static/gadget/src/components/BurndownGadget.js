@@ -129,11 +129,6 @@ const BurndownGadget = () => {
                 displayName = 'Remaining (Over Capacity)';
               }
 
-              // Show totalRemaining (includes added) instead of the split remaining
-              if (entry.dataKey === 'remaining' && dataPoint.totalRemaining != null) {
-                displayValue = dataPoint.totalRemaining;
-              }
-
               return (
                 <div key={index} style={{
                   display: 'flex',
@@ -408,7 +403,6 @@ const BurndownGadget = () => {
           <ComposedChart
             data={dataPoints}
             margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
-            stackOffset="sign"
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#f4f5f7" />
             <XAxis
@@ -446,26 +440,27 @@ const BurndownGadget = () => {
               dataKey="removed"
               fill="#FFDAD1"
               name="Scope Removed"
-              radius={[0, 0, 2, 2]}
-              stackId="burndown"
+              radius={[2, 2, 2, 2]}
             />
 
-            {/* Remaining Estimate (Main Bar) */}
-            <Bar
-              dataKey="remaining"
-              name="Remaining"
-              fill="#4C9AFF"
-              radius={[0, 0, 0, 0]}
-              stackId="burndown"
-            />
-
-            {/* Scope Added (Stacked on Top) */}
+            {/* Scope Added (Bar) */}
             <Bar
               dataKey="added"
               fill="#FFD666"
               name="Scope Added"
-              radius={[2, 2, 0, 0]}
-              stackId="burndown"
+              radius={[2, 2, 2, 2]}
+            />
+
+            {/* Remaining Estimate (Line) */}
+            <Line
+              type="monotone"
+              dataKey="totalRemaining"
+              name="Remaining"
+              stroke="#0065FF"
+              strokeWidth={2.5}
+              dot={{ fill: '#0065FF', r: 3, strokeWidth: 0 }}
+              activeDot={{ fill: '#0065FF', r: 5, strokeWidth: 2, stroke: '#fff' }}
+              connectNulls={true}
             />
 
             {/* Ideal Burndown Line */}

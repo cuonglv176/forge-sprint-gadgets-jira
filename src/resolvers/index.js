@@ -901,6 +901,11 @@ resolver.define('getBurndownData', async ({ payload }) => {
       originalEstimate: ri.originalEstimate
     }));
 
+    // FIX: Use last past/today dataPoint's totalRemaining for header
+    // This ensures header matches chart tooltip value
+    const lastPastDataPoint = [...dataPoints].reverse().find(dp => dp.totalRemaining != null);
+    const headerRemaining = lastPastDataPoint ? lastPastDataPoint.totalRemaining : Math.round(currentRemaining * 10) / 10;
+
     return {
       success: true,
       data: {
@@ -910,7 +915,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
         sprintEndDate: sprint.endDate,
         maxCapacity: Math.round(maxCapacity * 10) / 10,
         totalOriginalEstimate: Math.round(totalOriginalEstimate * 10) / 10,
-        currentRemaining: Math.round(currentRemaining * 10) / 10,
+        currentRemaining: headerRemaining,
         totalSpent: Math.round(totalSpent * 10) / 10,
         scopeAddedTotal: Math.round(scopeAddedTotal * 10) / 10,
         scopeRemovedTotal: Math.round(scopeRemovedTotal * 10) / 10,
