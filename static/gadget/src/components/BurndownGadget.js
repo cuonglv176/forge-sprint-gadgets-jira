@@ -15,51 +15,54 @@ import {
 } from 'recharts';
 
 /**
- * Apply backward calculation to fix the remaining line.
- * The backend returns currentRemaining (from Jira) which is correct (e.g., 246.5h),
- * but the dataPoints may have wrong totalRemaining values (e.g., 385.5h).
- * This function recalculates totalRemaining for all past days by working backward
- * from the current day's actual remaining.
+ * Apply FORWARD calculation to fix the remaining line.
+ * Formula: Remaining[N] = Original Estimate[N] - Cumulative Time Logged[N]
+ * Where Original Estimate[N] = baselineOE + cumulative scope added - cumulative scope removed up to day N
+ * 
+ * This correctly tracks how remaining decreases as work is logged,
+ * and how it changes when tasks are added/removed from the sprint.
  */
-const applyBackwardCalculation = (data) => {
-  if (!data || !data.dataPoints || !data.currentRemaining) return data;
+const applyForwardCalculation = (data) => {
+  if (!data || !data.dataPoints || !data.totalOriginalEstimate) return data;
 
-  const { dataPoints, currentRemaining } = data;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().split('T')[0];
-
-  // Find the last data point that has totalRemaining (i.e., past/today, not future)
-  let anchorIndex = -1;
-  for (let i = dataPoints.length - 1; i >= 0; i--) {
-    if (dataPoints[i].totalRemaining != null) {
-      anchorIndex = i;
-      break;
-    }
-  }
-
-  // If no anchor found, or only 1 data point, return as-is
-  if (anchorIndex < 0) return data;
+  const { dataPoints, totalOriginalEstimate, scopeAddedTotal, scopeRemovedTotal } = data;
 
   // Clone dataPoints to avoid mutation
   const newDataPoints = dataPoints.map(dp => ({ ...dp }));
 
-  // Set the anchor point to currentRemaining
-  newDataPoints[anchorIndex].totalRemaining = currentRemaining;
+  // Calculate baselineOE = current total OE minus all scope changes
+  // totalOriginalEstimate includes OE of added tasks, so subtract them and add back removed
+  const baselineOE = totalOriginalEstimate - (scopeAddedTotal || 0) + (scopeRemovedTotal || 0);
 
-  // Work backward from anchor to calculate previous days
-  for (let i = anchorIndex - 1; i >= 0; i--) {
-    if (newDataPoints[i].totalRemaining == null) continue; // skip if no data
-    
-    // remaining[i] = remaining[i+1] + dayLogged[i+1] - added[i+1] + removed[i+1]
-    const nextDp = newDataPoints[i + 1];
-    const dayLogged = nextDp.dayLogged || 0;
-    const added = nextDp.added || 0;
-    const removed = Math.abs(nextDp.removed || 0);
-    
-    newDataPoints[i].totalRemaining = Math.round(
-      (newDataPoints[i + 1].totalRemaining + dayLogged - added + removed) * 10
-    ) / 10;
+  // Forward pass: accumulate scope changes and worklogs
+  let cumulativeAdded = 0;
+  let cumulativeRemoved = 0;
+  let cumulativeLogged = 0;
+
+  for (let i = 0; i < newDataPoints.length; i++) {
+    const dp = newDataPoints[i];
+
+    // Skip future data points (no totalRemaining set)
+    if (dp.totalRemaining == null && dp.displayDate !== 'Start Sprint') continue;
+
+    // Accumulate scope changes (added is positive, removed is negative in data)
+    const added = dp.added || 0;
+    const removed = Math.abs(dp.removed || 0);
+    cumulativeAdded += added;
+    cumulativeRemoved += removed;
+
+    // Accumulate daily logged hours
+    const dayLogged = dp.dayLogged || 0;
+    cumulativeLogged += dayLogged;
+
+    // Current OE at this day = baselineOE + cumulative added - cumulative removed
+    const currentOE = baselineOE + cumulativeAdded - cumulativeRemoved;
+
+    // Remaining = Current OE - Cumulative Logged
+    const remaining = Math.round((currentOE - cumulativeLogged) * 10) / 10;
+
+    newDataPoints[i].totalRemaining = remaining;
+    newDataPoints[i].remaining = remaining;
   }
 
   return { ...data, dataPoints: newDataPoints };
@@ -105,8 +108,8 @@ const BurndownGadget = () => {
       });
 
       if (result.success) {
-        // Apply backward calculation from currentRemaining to fix chart remaining line
-        const fixedData = applyBackwardCalculation(result.data);
+        // Apply forward calculation: Remaining = OE - CumLog, tracking scope changes per day
+        const fixedData = applyForwardCalculation(result.data);
         setData(fixedData);
       } else {
         setError(result.error);
@@ -624,8 +627,9 @@ const BurndownGadget = () => {
             <div>totalSpent (Jira field) = <b>{totalSpent}h</b></div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Remaining Calculation ──</div>
-            <div>Formula: Remain(Start) = totalOriginalEstimate = {totalOriginalEstimate}h</div>
-            <div>Formula: Remain(dayN) = Remain(dayN-1) - Logged(dayN) + Added(dayN) - Removed(dayN)</div>
+            <div>Formula: Remaining[N] = CurrentOE[N] - CumulativeLogged[N]</div>
+            <div>Where: CurrentOE[N] = baselineOE + cumAdded[N] - cumRemoved[N]</div>
+            <div>baselineOE = {totalOriginalEstimate} - {scopeAddedTotal || 0} + {scopeRemovedTotal || 0} = <b>{(totalOriginalEstimate - (scopeAddedTotal || 0) + (scopeRemovedTotal || 0)).toFixed(1)}h</b></div>
             <div>Source: Worklogs fetched via /rest/api/3/issue/KEY/worklog API</div>
 
             <div style={{ fontWeight: '600', color: '#0065FF', marginTop: '8px' }}>── Scope Changes ──</div>
