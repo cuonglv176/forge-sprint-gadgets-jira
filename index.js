@@ -786,14 +786,60 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    let runningRemaining = totalOriginalEstimate;
-    let cumulativeLogged = 0;
+    // APPROACH: Use actual Jira remaining (currentRemaining) as anchor for today.
+    // Then reconstruct past days by working BACKWARDS from today.
+    // remaining[today] = currentRemaining (actual Jira value)
+    // remaining[yesterday] = remaining[today] + yesterday_worklogs - yesterday_scope_added + yesterday_scope_removed
+    // This ensures chart matches header and issue details.
+
+    // First pass: collect all dates and their daily changes
+    const tempDates = [];
+    const tempCurrent = new Date(startDate);
+    let tempWorkingDayCount = 0;
+    while (tempCurrent <= endDate) {
+      if (isWorkingDay(tempCurrent) && tempCurrent > startDate) {
+        tempWorkingDayCount++;
+      }
+      const dateStr = tempCurrent.toISOString().split('T')[0];
+      const tempDate = new Date(tempCurrent);
+      tempDate.setHours(0, 0, 0, 0);
+      const isPastOrToday = tempDate <= today;
+      const scopeChange = scopeChangesByDate[dateStr] || { added: 0, removed: 0 };
+      const dayLogged = worklogByDate[dateStr] || 0;
+      const ideal = Math.max(0, maxCapacity - (dailyDecrease * tempWorkingDayCount));
+      tempDates.push({ dateStr, isPastOrToday, scopeChange, dayLogged, ideal, date: new Date(tempCurrent) });
+      tempCurrent.setDate(tempCurrent.getDate() + 1);
+    }
+
+    // Find today's index (last past/today date)
+    let todayIdx = -1;
+    for (let i = tempDates.length - 1; i >= 0; i--) {
+      if (tempDates[i].isPastOrToday) { todayIdx = i; break; }
+    }
+
+    // Calculate remaining for each past/today date, working backwards from actual Jira remaining
+    const remainingByIdx = {};
+    if (todayIdx >= 0) {
+      remainingByIdx[todayIdx] = currentRemaining; // Anchor: actual Jira remaining
+      // Work backwards
+      for (let i = todayIdx - 1; i >= 0; i--) {
+        const nextDay = tempDates[i + 1];
+        // remaining[i] = remaining[i+1] + nextDay.dayLogged - nextDay.scopeChange.added + nextDay.scopeChange.removed
+        remainingByIdx[i] = remainingByIdx[i + 1] + nextDay.dayLogged - nextDay.scopeChange.added + nextDay.scopeChange.removed;
+      }
+    }
+
+    // Start Sprint dataPoint: use day 0's remaining (first date = sprint start day)
+    const startSprintRemaining = remainingByIdx[0] != null
+      ? Math.round(remainingByIdx[0] * 10) / 10
+      : Math.round(totalOriginalEstimate * 10) / 10;
 
     dataPoints.push({
       date: 'start',
       displayDate: 'Start Sprint',
       ideal: Math.round(maxCapacity * 10) / 10,
-      remaining: Math.round(totalOriginalEstimate * 10) / 10,
+      remaining: Math.round(startSprintRemaining * 10) / 10,
+      totalRemaining: Math.round(startSprintRemaining * 10) / 10,
       timeLogged: 0,
       dayLogged: 0,
       cumulativeLogged: 0,
@@ -801,46 +847,30 @@ resolver.define('getBurndownData', async ({ payload }) => {
       removed: 0
     });
 
-    while (current <= endDate) {
-      if (isWorkingDay(current) && current > startDate) {
-        workingDayCount++;
-      }
-
-      const ideal = Math.max(0, maxCapacity - (dailyDecrease * workingDayCount));
-      const dateStr = current.toISOString().split('T')[0];
-      const currentDate = new Date(current);
-      currentDate.setHours(0, 0, 0, 0);
-      const isPastOrToday = currentDate <= today;
-
-      const scopeChange = scopeChangesByDate[dateStr] || { added: 0, removed: 0 };
-      const dayLogged = worklogByDate[dateStr] || 0;
+    let cumulativeLogged = 0;
+    for (let i = 0; i < tempDates.length; i++) {
+      const { dateStr, isPastOrToday, scopeChange, dayLogged, ideal } = tempDates[i];
 
       if (isPastOrToday) {
         cumulativeLogged += dayLogged;
-        runningRemaining = runningRemaining - dayLogged + scopeChange.added - scopeChange.removed;
       }
 
-      // FIX: remaining already includes scope added (line 694: runningRemaining += scopeChange.added)
-      // So for stacked bar chart: remaining bar = runningRemaining - today's added
-      // added bar = today's added
-      // Visual total = remaining bar + added bar = runningRemaining (correct!)
-      const remainingForChart = isPastOrToday
-        ? Math.round((runningRemaining - scopeChange.added) * 10) / 10
+      const totalRemaining = remainingByIdx[i] != null
+        ? Math.round(remainingByIdx[i] * 10) / 10
         : null;
 
       dataPoints.push({
         date: dateStr,
         displayDate: formatDate(dateStr),
         ideal: Math.round(ideal * 10) / 10,
-        remaining: remainingForChart,
-        totalRemaining: isPastOrToday ? Math.round(runningRemaining * 10) / 10 : null,
+        remaining: totalRemaining, // For line chart, remaining = totalRemaining
+        totalRemaining: totalRemaining,
         timeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
         dayLogged: isPastOrToday ? Math.round(dayLogged * 10) / 10 : null,
         cumulativeLogged: isPastOrToday ? Math.round(cumulativeLogged * 10) / 10 : null,
         added: scopeChange.added > 0 ? Math.round(scopeChange.added * 10) / 10 : 0,
         removed: scopeChange.removed > 0 ? -Math.round(scopeChange.removed * 10) / 10 : 0
       });
-      current.setDate(current.getDate() + 1);
     }
 
     // FIX: Issue details with subtask-aware effective values
@@ -901,10 +931,9 @@ resolver.define('getBurndownData', async ({ payload }) => {
       originalEstimate: ri.originalEstimate
     }));
 
-    // FIX: Use last past/today dataPoint's totalRemaining for header
-    // This ensures header matches chart tooltip value
-    const lastPastDataPoint = [...dataPoints].reverse().find(dp => dp.totalRemaining != null);
-    const headerRemaining = lastPastDataPoint ? lastPastDataPoint.totalRemaining : Math.round(currentRemaining * 10) / 10;
+    // Header remaining = actual Jira remaining (currentRemaining from computeEffectiveRemaining)
+    // This matches both chart's last dataPoint AND issue details TOTAL
+    const headerRemaining = Math.round(currentRemaining * 10) / 10;
 
     return {
       success: true,
