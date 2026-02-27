@@ -3,7 +3,7 @@ modules:
     - key: sprint-burndown-gadget
       resource: main
       resolver:
-        function: resolver-v2
+        function: resolver
       edit:
         resource: main
       title: Sprint Burndown Chart v2.1
@@ -13,7 +13,7 @@ modules:
     - key: sprint-health-gadget
       resource: main
       resolver:
-        function: resolver-v2
+        function: resolver
       edit:
         resource: main
       title: Sprint Health
@@ -23,7 +23,7 @@ modules:
     - key: at-risk-gadget
       resource: main
       resolver:
-        function: resolver-v2
+        function: resolver
       edit:
         resource: main
       title: At Risk Items
@@ -33,7 +33,7 @@ modules:
     - key: scope-changes-gadget
       resource: main
       resolver:
-        function: resolver-v2
+        function: resolver
       edit:
         resource: main
       title: Scope Changes
@@ -43,7 +43,7 @@ modules:
     - key: high-priority-gadget
       resource: main
       resolver:
-        function: resolver-v2
+        function: resolver
       edit:
         resource: main
       title: High Priority Items
@@ -53,7 +53,7 @@ modules:
     - key: releases-gadget
       resource: main
       resolver:
-        function: resolver-v2
+        function: resolver
       edit:
         resource: main
       title: Sprint Releases
@@ -67,7 +67,7 @@ modules:
       description: Configure Sprint Gadgets
 
   function:
-    - key: resolver-v2
+    - key: resolver
       handler: index.handler
 
 resources:
