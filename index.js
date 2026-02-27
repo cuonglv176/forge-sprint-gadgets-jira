@@ -251,14 +251,15 @@ const getRemovedFromSprintIssues = async (sprintId, sprintName) => {
   const fieldsArray = fields.split(',');
 
   try {
-    // Method 1: JQL with sprint ID via v2 search endpoint (more compatible)
+    // Method 1: JQL with sprint ID via v3 POST search/jql endpoint
     try {
       const jqlStr = `sprint was ${sprintId} AND sprint != ${sprintId}`;
-      console.log(`[getRemovedFromSprintIssues] Method 1: JQL v2 GET with ID: ${jqlStr}`);
-      const response = await api.asUser().requestJira(
-        route`/rest/api/2/search?jql=${jqlStr}&fields=${fields}&maxResults=100`,
-        { headers: { 'Accept': 'application/json' } }
-      );
+      console.log(`[getRemovedFromSprintIssues] Method 1: JQL v3 POST with ID: ${jqlStr}`);
+      const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql: jqlStr, fields: fieldsArray, maxResults: 100 })
+      });
 
       if (response.ok) {
         const data = await response.json();
@@ -304,11 +305,11 @@ const getRemovedFromSprintIssues = async (sprintId, sprintName) => {
       }
     }
 
-    // Method 3: JQL via v2 POST (different endpoint format)
+    // Method 3: JQL via v3 POST with alternative syntax
     try {
       const jqlStr3 = `sprint was ${sprintId} AND NOT sprint = ${sprintId}`;
-      console.log(`[getRemovedFromSprintIssues] Method 3: JQL v2 POST: ${jqlStr3}`);
-      const response3 = await api.asUser().requestJira(route`/rest/api/2/search`, {
+      console.log(`[getRemovedFromSprintIssues] Method 3: JQL v3 POST: ${jqlStr3}`);
+      const response3 = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
         method: 'POST',
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -347,7 +348,7 @@ const getRemovedFromSprintIssues = async (sprintId, sprintName) => {
         const searchJql = `${projectJql}updated >= -30d AND sprint != ${sprintId} ORDER BY updated DESC`;
         console.log(`[getRemovedFromSprintIssues] Method 4 JQL: ${searchJql}`);
 
-        const response4 = await api.asUser().requestJira(route`/rest/api/2/search`, {
+        const response4 = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
           method: 'POST',
           headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -817,16 +818,29 @@ resolver.define('getBurndownData', async ({ payload }) => {
       if (tempDates[i].isPastOrToday) { todayIdx = i; break; }
     }
 
+    console.log(`[BURNDOWN DEBUG] currentRemaining=${currentRemaining}, todayIdx=${todayIdx}, tempDates.length=${tempDates.length}`);
+    console.log(`[BURNDOWN DEBUG] totalOE=${totalOriginalEstimate}, totalSpent=${totalSpent}`);
+    for (let d = 0; d < tempDates.length; d++) {
+      const td = tempDates[d];
+      if (td.isPastOrToday) {
+        console.log(`[BURNDOWN DEBUG] date[${d}]=${td.dateStr} dayLogged=${td.dayLogged} scopeAdded=${td.scopeChange.added} scopeRemoved=${td.scopeChange.removed}`);
+      }
+    }
+
     // Calculate remaining for each past/today date, working backwards from actual Jira remaining
     const remainingByIdx = {};
     if (todayIdx >= 0) {
       remainingByIdx[todayIdx] = currentRemaining; // Anchor: actual Jira remaining
+      console.log(`[BURNDOWN DEBUG] Anchor: remainingByIdx[${todayIdx}] = ${currentRemaining}`);
       // Work backwards
       for (let i = todayIdx - 1; i >= 0; i--) {
         const nextDay = tempDates[i + 1];
         // remaining[i] = remaining[i+1] + nextDay.dayLogged - nextDay.scopeChange.added + nextDay.scopeChange.removed
         remainingByIdx[i] = remainingByIdx[i + 1] + nextDay.dayLogged - nextDay.scopeChange.added + nextDay.scopeChange.removed;
+        console.log(`[BURNDOWN DEBUG] remainingByIdx[${i}] = ${remainingByIdx[i + 1]} + ${nextDay.dayLogged} - ${nextDay.scopeChange.added} + ${nextDay.scopeChange.removed} = ${remainingByIdx[i]}`);
       }
+    } else {
+      console.log(`[BURNDOWN DEBUG] WARNING: todayIdx=-1, no backward calculation possible`);
     }
 
     // Start Sprint dataPoint: use day 0's remaining (first date = sprint start day)
@@ -1004,27 +1018,13 @@ resolver.define('getSprintHealth', async ({ payload }) => {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
 
-    // Skip subtasks that are counted via parent, and skip parents with subtasks not in list
-    const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
-
+    // Count ALL issues individually (no dedup) - each task/subtask is counted separately
+    // This matches the total shown in High Priority Items gadget
     const underIssues = [], normalIssues = [], goodIssues = [];
     issues.forEach(issue => {
-      // Skip subtasks (counted via parent)
-      if (subtaskKeys.has(issue.key)) return;
-      // Skip parents with subtasks but none in filtered list
-      if (parentKeys.has(issue.key) && !(subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0)) return;
-
-      let original, spent, remaining;
-      if (parentKeys.has(issue.key) && subtasksByParent[issue.key]) {
-        // Parent with subtasks in list: use subtask totals
-        original = subtasksByParent[issue.key].reduce((s, sub) => s + secondsToHours(sub.fields.timeoriginalestimate), 0);
-        spent = subtasksByParent[issue.key].reduce((s, sub) => s + secondsToHours(sub.fields.timespent), 0);
-        remaining = subtasksByParent[issue.key].reduce((s, sub) => s + secondsToHours(sub.fields.timeestimate), 0);
-      } else {
-        original = secondsToHours(issue.fields.timeoriginalestimate);
-        spent = secondsToHours(issue.fields.timespent);
-        remaining = secondsToHours(issue.fields.timeestimate);
-      }
+      const original = secondsToHours(issue.fields.timeoriginalestimate);
+      const spent = secondsToHours(issue.fields.timespent);
+      const remaining = secondsToHours(issue.fields.timeestimate);
 
       const actualTotal = spent + remaining;
       const detail = {
