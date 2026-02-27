@@ -655,10 +655,10 @@ resolver.define('getBurndownData', async ({ payload }) => {
     const workingDays = countWorkingDays(startDate, endDate);
     const maxCapacity = workingDays * HOURS_PER_DAY * teamSize;
 
-    // Original Estimate from baseline using subtask logic
-    const totalOriginalEstimate = filteredBaseline?.issues?.reduce((sum, item) =>
-      sum + (item.originalEstimate || 0), 0
-    ) || computeEffectiveOriginalEstimate(issues);
+    // Original Estimate using subtask-aware logic (ALWAYS use effective calculation)
+    // Baseline may contain raw parent values that include ALL subtasks (even other assignees)
+    // So we always compute from current issues with subtask dedup
+    const totalOriginalEstimate = computeEffectiveOriginalEstimate(issues);
 
     // FIX: Current remaining and spent using subtask-aware logic to avoid duplicate
     const currentRemaining = computeEffectiveRemaining(issues);
@@ -702,7 +702,11 @@ resolver.define('getBurndownData', async ({ payload }) => {
 
       if (issueAddedDate) {
         const dateStr = issueAddedDate.toISOString().split('T')[0];
-        const oe = secondsToHours(issue.fields.timeoriginalestimate);
+        // Use effective OE: skip parent tasks with subtasks (their OE = aggregated ALL subtasks)
+        let oe = secondsToHours(issue.fields.timeoriginalestimate);
+        if (isParentWithSubtasks(issue)) {
+          oe = 0; // Parent's OE already included via subtasks; don't double count
+        }
 
         addedIssues.push({
           key: issue.key,
@@ -740,7 +744,10 @@ resolver.define('getBurndownData', async ({ payload }) => {
             : endDate.toISOString().split('T')[0];
         }
 
-        const oe = secondsToHours(removedIssue.fields.timeoriginalestimate);
+        let oe = secondsToHours(removedIssue.fields.timeoriginalestimate);
+        if (isParentWithSubtasks(removedIssue)) {
+          oe = 0; // Parent's OE = aggregated ALL subtasks; skip to avoid duplicate
+        }
 
         removedIssues.push({
           key: removedIssue.key,
@@ -894,6 +901,11 @@ resolver.define('getBurndownData', async ({ payload }) => {
       originalEstimate: ri.originalEstimate
     }));
 
+    // FIX: Use last past/today dataPoint's totalRemaining for header
+    // This ensures header matches chart tooltip value
+    const lastPastDataPoint = [...dataPoints].reverse().find(dp => dp.totalRemaining != null);
+    const headerRemaining = lastPastDataPoint ? lastPastDataPoint.totalRemaining : Math.round(currentRemaining * 10) / 10;
+
     return {
       success: true,
       data: {
@@ -903,7 +915,7 @@ resolver.define('getBurndownData', async ({ payload }) => {
         sprintEndDate: sprint.endDate,
         maxCapacity: Math.round(maxCapacity * 10) / 10,
         totalOriginalEstimate: Math.round(totalOriginalEstimate * 10) / 10,
-        currentRemaining: Math.round(currentRemaining * 10) / 10,
+        currentRemaining: headerRemaining,
         totalSpent: Math.round(totalSpent * 10) / 10,
         scopeAddedTotal: Math.round(scopeAddedTotal * 10) / 10,
         scopeRemovedTotal: Math.round(scopeRemovedTotal * 10) / 10,
@@ -963,20 +975,54 @@ resolver.define('getSprintHealth', async ({ payload }) => {
       issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
     }
 
-    let underCount = 0, normalCount = 0, goodCount = 0;
+    // Skip subtasks that are counted via parent, and skip parents with subtasks not in list
+    const { subtasksByParent, subtaskKeys, parentKeys } = buildSubtaskMap(issues);
+
+    const underIssues = [], normalIssues = [], goodIssues = [];
     issues.forEach(issue => {
-      const original = secondsToHours(issue.fields.timeoriginalestimate);
-      const spent = secondsToHours(issue.fields.timespent);
-      const remaining = secondsToHours(issue.fields.timeestimate);
+      // Skip subtasks (counted via parent)
+      if (subtaskKeys.has(issue.key)) return;
+      // Skip parents with subtasks but none in filtered list
+      if (parentKeys.has(issue.key) && !(subtasksByParent[issue.key] && subtasksByParent[issue.key].length > 0)) return;
+
+      let original, spent, remaining;
+      if (parentKeys.has(issue.key) && subtasksByParent[issue.key]) {
+        // Parent with subtasks in list: use subtask totals
+        original = subtasksByParent[issue.key].reduce((s, sub) => s + secondsToHours(sub.fields.timeoriginalestimate), 0);
+        spent = subtasksByParent[issue.key].reduce((s, sub) => s + secondsToHours(sub.fields.timespent), 0);
+        remaining = subtasksByParent[issue.key].reduce((s, sub) => s + secondsToHours(sub.fields.timeestimate), 0);
+      } else {
+        original = secondsToHours(issue.fields.timeoriginalestimate);
+        spent = secondsToHours(issue.fields.timespent);
+        remaining = secondsToHours(issue.fields.timeestimate);
+      }
+
       const actualTotal = spent + remaining;
-      if (original < actualTotal) underCount++;
-      else if (original > actualTotal) goodCount++;
-      else normalCount++;
+      const detail = {
+        key: issue.key,
+        summary: issue.fields.summary,
+        assignee: issue.fields.assignee?.displayName || 'Unassigned',
+        status: issue.fields.status?.name || 'To Do',
+        originalEstimate: original,
+        remainingEstimate: remaining,
+        timeSpent: spent,
+        issueType: issue.fields.issuetype?.name || 'Task'
+      };
+
+      if (original < actualTotal) underIssues.push(detail);
+      else if (original > actualTotal) goodIssues.push(detail);
+      else normalIssues.push(detail);
     });
+
+    const effectiveTotal = underIssues.length + normalIssues.length + goodIssues.length;
 
     return {
       success: true,
-      data: { counts: { under: underCount, normal: normalCount, good: goodCount, total: issues.length }, sprintName: sprint.name }
+      data: {
+        counts: { under: underIssues.length, normal: normalIssues.length, good: goodIssues.length, total: effectiveTotal },
+        issues: { under: underIssues, normal: normalIssues, good: goodIssues },
+        sprintName: sprint.name
+      }
     };
   } catch (error) {
     return { success: false, error: error.message };
