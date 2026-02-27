@@ -108,8 +108,54 @@ const BurndownGadget = () => {
       });
 
       if (result.success) {
+        let burndownData = result.data;
+
+        // Also call detectRemovedIssuesV3 to get accurate removed issues (bypasses Forge cache)
+        try {
+          const removedResult = await invoke('detectRemovedIssuesV3', {
+            boardId: config.boardId
+          });
+          if (removedResult.success && removedResult.data && removedResult.data.length > 0) {
+            // Merge removed issues into burndown data
+            const removedIssues = removedResult.data;
+            let scopeRemovedTotal = 0;
+            const removedByDate = {};
+
+            removedIssues.forEach(ri => {
+              const oe = ri.isParent ? 0 : (ri.originalEstimate || 0);
+              scopeRemovedTotal += oe;
+              if (ri.removedDate) {
+                if (!removedByDate[ri.removedDate]) removedByDate[ri.removedDate] = 0;
+                removedByDate[ri.removedDate] += oe;
+              }
+            });
+
+            // Update dataPoints with removed scope
+            if (burndownData.dataPoints) {
+              burndownData.dataPoints = burndownData.dataPoints.map(dp => {
+                const removedOnDate = removedByDate[dp.date] || 0;
+                if (removedOnDate > 0) {
+                  return { ...dp, removed: -(dp.removed ? Math.abs(dp.removed) + removedOnDate : removedOnDate) };
+                }
+                return dp;
+              });
+            }
+
+            burndownData.scopeRemovedTotal = (burndownData.scopeRemovedTotal || 0) + scopeRemovedTotal;
+            burndownData.removedIssuesCount = (burndownData.removedIssuesCount || 0) + removedIssues.length;
+            burndownData.removedIssueDetails = removedIssues.map(ri => ({
+              key: ri.key,
+              summary: ri.summary,
+              removedDate: ri.removedDate,
+              originalEstimate: ri.originalEstimate
+            }));
+          }
+        } catch (removedErr) {
+          console.warn('Failed to fetch removed issues:', removedErr);
+        }
+
         // Apply forward calculation: Remaining = OE - CumLog, tracking scope changes per day
-        const fixedData = applyForwardCalculation(result.data);
+        const fixedData = applyForwardCalculation(burndownData);
         setData(fixedData);
       } else {
         setError(result.error);

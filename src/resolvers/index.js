@@ -1358,4 +1358,187 @@ resolver.define('getReleaseData', async ({ payload }) => {
   }
 });
 
+// ============ V3 RESOLVERS (NEW NAMES TO BYPASS FORGE CACHE) ============
+
+// NEW: Sprint Health V3 - counts ALL issues individually (no dedup)
+resolver.define('getSprintHealthV3', async ({ payload }) => {
+  try {
+    const { boardId, assignee } = payload;
+    if (!boardId) return { success: false, error: 'Board ID is required' };
+
+    const sprint = await getActiveSprint(boardId);
+    if (!sprint) return { success: false, error: 'No active sprint found' };
+
+    let issues = await getSprintIssues(sprint.id);
+    if (assignee && assignee !== 'All') {
+      issues = issues.filter(i => i.fields.assignee?.displayName === assignee);
+    }
+
+    // Count ALL issues individually - each task/subtask is counted separately
+    const underIssues = [], normalIssues = [], goodIssues = [];
+    issues.forEach(issue => {
+      const original = secondsToHours(issue.fields.timeoriginalestimate);
+      const spent = secondsToHours(issue.fields.timespent);
+      const remaining = secondsToHours(issue.fields.timeestimate);
+
+      const actualTotal = spent + remaining;
+      const detail = {
+        key: issue.key,
+        summary: issue.fields.summary,
+        assignee: issue.fields.assignee?.displayName || 'Unassigned',
+        status: issue.fields.status?.name || 'To Do',
+        originalEstimate: original,
+        remainingEstimate: remaining,
+        timeSpent: spent,
+        issueType: issue.fields.issuetype?.name || 'Task'
+      };
+
+      if (original < actualTotal) underIssues.push(detail);
+      else if (original > actualTotal) goodIssues.push(detail);
+      else normalIssues.push(detail);
+    });
+
+    const effectiveTotal = underIssues.length + normalIssues.length + goodIssues.length;
+    console.log(`[getSprintHealthV3] Total issues: ${issues.length}, effective: ${effectiveTotal}`);
+
+    return {
+      success: true,
+      data: {
+        counts: { under: underIssues.length, normal: normalIssues.length, good: goodIssues.length, total: effectiveTotal },
+        issues: { under: underIssues, normal: normalIssues, good: goodIssues },
+        sprintName: sprint.name
+      }
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// NEW: Detect removed issues V3 - uses changelog-based detection with v3 API only
+resolver.define('detectRemovedIssuesV3', async ({ payload }) => {
+  try {
+    const { boardId } = payload;
+    if (!boardId) return { success: false, error: 'Board ID is required' };
+
+    const sprint = await getActiveSprint(boardId);
+    if (!sprint) return { success: false, error: 'No active sprint found' };
+
+    const sprintId = sprint.id;
+    const sprintName = sprint.name;
+    const fields = ['summary', 'status', 'priority', 'assignee', 'issuetype', 'timeoriginalestimate', 'timeestimate', 'timespent', 'created', 'updated', 'parent', 'subtasks'];
+
+    console.log(`[detectRemovedIssuesV3] Starting for sprint ${sprintName} (${sprintId})`);
+
+    // Method A: JQL "sprint was X AND sprint != X" via v3 POST search/jql
+    try {
+      const jqlStr = `sprint was ${sprintId} AND sprint != ${sprintId}`;
+      console.log(`[detectRemovedIssuesV3] Method A: ${jqlStr}`);
+      const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql: jqlStr, fields, maxResults: 100 })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const issues = data.issues || [];
+        console.log(`[detectRemovedIssuesV3] Method A found ${issues.length} issues`);
+        if (issues.length > 0) {
+          // Get changelogs to find removal dates
+          const result = await enrichRemovedIssuesWithDates(issues, sprintName, sprintId);
+          return { success: true, data: result };
+        }
+      } else {
+        const errText = await response.text();
+        console.log(`[detectRemovedIssuesV3] Method A failed: ${response.status} - ${errText.substring(0, 200)}`);
+      }
+    } catch (e) {
+      console.log(`[detectRemovedIssuesV3] Method A error: ${e.message}`);
+    }
+
+    // Method B: Changelog-based detection - find issues in project that were removed from sprint
+    try {
+      console.log(`[detectRemovedIssuesV3] Method B: Changelog-based detection`);
+      const projectMatch = sprintName.match(/^([A-Z]+)/);
+      let projectJql = '';
+      if (projectMatch) {
+        projectJql = `project = ${projectMatch[1]} AND `;
+      }
+      const searchJql = `${projectJql}updated >= -30d AND sprint != ${sprintId} ORDER BY updated DESC`;
+      console.log(`[detectRemovedIssuesV3] Method B JQL: ${searchJql}`);
+
+      const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql: searchJql, fields, maxResults: 200 })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const candidateIssues = data.issues || [];
+        console.log(`[detectRemovedIssuesV3] Method B: ${candidateIssues.length} candidates`);
+
+        const removedIssues = [];
+        const BATCH = 5;
+        for (let i = 0; i < Math.min(candidateIssues.length, 100); i += BATCH) {
+          const batch = candidateIssues.slice(i, i + BATCH);
+          const results = await Promise.all(
+            batch.map(async (issue) => {
+              const histories = await getIssueChangelog(issue.key);
+              const { removedDate } = analyzeSprintChangelog(histories, sprintName, sprintId);
+              if (removedDate) {
+                return {
+                  key: issue.key,
+                  summary: issue.fields.summary,
+                  removedDate: removedDate.toISOString().split('T')[0],
+                  originalEstimate: secondsToHours(issue.fields.timeoriginalestimate),
+                  isParent: isParentWithSubtasks(issue)
+                };
+              }
+              return null;
+            })
+          );
+          results.filter(r => r !== null).forEach(r => removedIssues.push(r));
+        }
+
+        console.log(`[detectRemovedIssuesV3] Method B found ${removedIssues.length} removed issues`);
+        return { success: true, data: removedIssues };
+      } else {
+        const errText = await response.text();
+        console.log(`[detectRemovedIssuesV3] Method B failed: ${response.status} - ${errText.substring(0, 200)}`);
+      }
+    } catch (e) {
+      console.log(`[detectRemovedIssuesV3] Method B error: ${e.message}`);
+    }
+
+    console.log(`[detectRemovedIssuesV3] All methods failed`);
+    return { success: true, data: [] };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Helper for enriching removed issues with dates from changelog
+const enrichRemovedIssuesWithDates = async (issues, sprintName, sprintId) => {
+  const result = [];
+  const BATCH = 5;
+  for (let i = 0; i < issues.length; i += BATCH) {
+    const batch = issues.slice(i, i + BATCH);
+    const batchResults = await Promise.all(
+      batch.map(async (issue) => {
+        const histories = await getIssueChangelog(issue.key);
+        const { removedDate } = analyzeSprintChangelog(histories, sprintName, sprintId);
+        return {
+          key: issue.key,
+          summary: issue.fields.summary,
+          removedDate: removedDate ? removedDate.toISOString().split('T')[0] : null,
+          originalEstimate: secondsToHours(issue.fields.timeoriginalestimate),
+          isParent: isParentWithSubtasks(issue)
+        };
+      })
+    );
+    result.push(...batchResults);
+  }
+  return result;
+};
+
 export const handler = resolver.getDefinitions();

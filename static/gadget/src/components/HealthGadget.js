@@ -30,7 +30,8 @@ const HealthGadget = () => {
     setError(null);
 
     try {
-      const result = await invoke('getSprintHealth', {
+      // Use V3 resolver to bypass Forge cache and count all 36 tasks
+      const result = await invoke('getSprintHealthV3', {
         boardId: config.boardId
       });
 
