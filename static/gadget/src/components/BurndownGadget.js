@@ -14,6 +14,57 @@ import {
   Legend,
 } from 'recharts';
 
+/**
+ * Apply backward calculation to fix the remaining line.
+ * The backend returns currentRemaining (from Jira) which is correct (e.g., 246.5h),
+ * but the dataPoints may have wrong totalRemaining values (e.g., 385.5h).
+ * This function recalculates totalRemaining for all past days by working backward
+ * from the current day's actual remaining.
+ */
+const applyBackwardCalculation = (data) => {
+  if (!data || !data.dataPoints || !data.currentRemaining) return data;
+
+  const { dataPoints, currentRemaining } = data;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().split('T')[0];
+
+  // Find the last data point that has totalRemaining (i.e., past/today, not future)
+  let anchorIndex = -1;
+  for (let i = dataPoints.length - 1; i >= 0; i--) {
+    if (dataPoints[i].totalRemaining != null) {
+      anchorIndex = i;
+      break;
+    }
+  }
+
+  // If no anchor found, or only 1 data point, return as-is
+  if (anchorIndex < 0) return data;
+
+  // Clone dataPoints to avoid mutation
+  const newDataPoints = dataPoints.map(dp => ({ ...dp }));
+
+  // Set the anchor point to currentRemaining
+  newDataPoints[anchorIndex].totalRemaining = currentRemaining;
+
+  // Work backward from anchor to calculate previous days
+  for (let i = anchorIndex - 1; i >= 0; i--) {
+    if (newDataPoints[i].totalRemaining == null) continue; // skip if no data
+    
+    // remaining[i] = remaining[i+1] + dayLogged[i+1] - added[i+1] + removed[i+1]
+    const nextDp = newDataPoints[i + 1];
+    const dayLogged = nextDp.dayLogged || 0;
+    const added = nextDp.added || 0;
+    const removed = Math.abs(nextDp.removed || 0);
+    
+    newDataPoints[i].totalRemaining = Math.round(
+      (newDataPoints[i + 1].totalRemaining + dayLogged - added + removed) * 10
+    ) / 10;
+  }
+
+  return { ...data, dataPoints: newDataPoints };
+};
+
 const BurndownGadget = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -54,7 +105,9 @@ const BurndownGadget = () => {
       });
 
       if (result.success) {
-        setData(result.data);
+        // Apply backward calculation from currentRemaining to fix chart remaining line
+        const fixedData = applyBackwardCalculation(result.data);
+        setData(fixedData);
       } else {
         setError(result.error);
       }
